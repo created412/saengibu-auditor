@@ -1,0 +1,16 @@
+# 기재요령 원문 PDF는 저장소에 올리지 않는다 (교육부·KERIS 발행물)
+*.pdf
+
+# 학생 기록이 들어갈 수 있는 파일은 절대 올리지 않는다
+*.csv
+*.tsv
+*.xlsx
+*.xls
+out/
+작업/
+
+# 편집기·OS
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

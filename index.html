@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>생기부 감사관</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Black+Han+Sans&family=Noto+Sans+KR:wght@400;500;700;900&display=swap">
+  <link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="#single" data-go="single">
+      <span class="brand-mark" id="brandMark" aria-hidden="true"></span>
+      <span>
+        <span class="brand-name">생기부 감사관</span>
+        <span class="brand-sub">2026 기재요령 기준 세특 점검</span>
+      </span>
+    </a>
+    <nav class="tabs" role="tablist">
+      <button class="tab" role="tab" data-go="single" aria-selected="true">개별 감사</button>
+      <button class="tab" role="tab" data-go="class" aria-selected="false">학급 감사 · 세특 응급실</button>
+    </nav>
+    <div class="spacer"></div>
+    <span class="mode-chip" title="모든 판단은 이 브라우저 안의 규칙 엔진이 합니다"><span class="dot"></span>오프라인 · API 키 불필요</span>
+  </header>
+
+  <main>
+    <section id="view-single"></section>
+    <section id="view-class" hidden></section>
+  </main>
+
+  <footer class="site-footer">
+    <span class="foot-name">생기부 감사관</span>
+    <span>2026학년도 학교생활기록부 기재요령(고등학교) 기준 점검 도구</span>
+    <span>학생 기록은 이 브라우저 밖으로 나가지 않습니다 · 결과는 교사 검수용 초안</span>
+  </footer>
+
+  <script src="js/korean.js"></script>
+  <script src="js/lexicon.js"></script>
+  <script src="js/engine.js"></script>
+  <script src="js/art.js"></script>
+  <script src="js/demo.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
