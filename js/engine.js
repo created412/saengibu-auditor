@@ -248,10 +248,14 @@
             if (!existing.hits.some((h) => h.word === m[0] && h.rule === rule.id)) existing.hits.push(hit);
             continue;
           }
+          const alts = word
+            ? [...new Set([...(Array.isArray(fixed) ? fixed : fixed ? [fixed] : []),
+              ...(rule.replace ? [rule.replace(m[0])] : []), ...(rule.altReplacements || [])])].filter(Boolean)
+            : [];
           push('forbidden', start, end, {
             rule: rule.id, title: rule.title, ref: rule.ref, why: rule.why, hits: [hit], matches: [m[0]],
             mode: word ? 'replace' : 'clause',
-            replacement: word ? (fixed || (rule.replace ? rule.replace(m[0]) : '')) : null,
+            replacement: alts[0] || null, replacements: alts,
           });
         }
       }
@@ -484,7 +488,9 @@
     const sent = issue.global ? null : sentenceAt(auditResult.sentences, issue.start);
     const sourceHits = opts.sources && sent ? findEvidence(opts.sources, sent.text) : [];
     const candidates = lex.CANDIDATES[issue.cat] || lex.CANDIDATES.thinking;
-    const q = { issueId: issue.id, type: issue.type, grade: issue.grade, sourceHits };
+    // 빈칸만 주지 않고 고를 수 있는 문장 틀을 함께 준다
+    const templates = lex.TEMPLATES[issue.type === 'vague' ? issue.kind : issue.type] || [];
+    const q = { issueId: issue.id, type: issue.type, grade: issue.grade, sourceHits, templates };
     const noneDelete = { label: '관찰한 내용 없음 → 이 문장 삭제', answer: { kind: 'delete' } };
 
     switch (issue.type) {
@@ -560,7 +566,9 @@
         // (교과 내용 속 낱말을 잘못 잡은 경우에는 교사가 본문을 직접 고쳐 다시 감사한다)
         const choices = issue.mode === 'replace' && issue.replacement
           ? [
-            { label: `‘${issue.matches[0]}’ → ‘${issue.replacement}’(으)로 바꾸기`, answer: { kind: 'replace' }, primary: true },
+            ...(issue.replacements || [issue.replacement]).slice(0, 3).map((r, k) => ({
+              label: `‘${issue.matches[0]}’ → ‘${r}’(으)로 바꾸기`, answer: { kind: 'replace', replacement: r }, primary: k === 0,
+            })),
             { label: '이 부분 삭제', answer: { kind: 'delete' } },
           ]
           : [
@@ -568,7 +576,7 @@
           ];
         return {
           ...q, prompt: `[${issue.titles.join('·')}] ${what} — ${issue.why}`, mode: 'choice', choices,
-          actions: choices.map((c) => c.answer.kind),
+          actions: [...new Set(choices.map((c) => c.answer.kind))],
         };
       }
       case 'symbol':
@@ -742,7 +750,8 @@
     };
 
     if (answer.kind === 'replace') {
-      const rep = issue.replacement || '';
+      const rep = (answer.replacement || issue.replacement || '').trim();
+      if (!rep) return res;
       let after = text.slice(idx + issue.text.length);
       const pm = after.match(/^(으로|로|을|를|이|가|은|는|과|와)/);
       let replacement = rep;

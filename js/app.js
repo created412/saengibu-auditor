@@ -100,7 +100,7 @@
   }
 
   function draftFor(sig) {
-    if (!S.drafts[sig]) S.drafts[sig] = { checked: [], edits: {}, customOn: false, custom: '', keepEval: true, detail: '', sourceFact: '' };
+    if (!S.drafts[sig]) S.drafts[sig] = { checked: [], edits: {}, customOn: false, custom: '', keepEval: true, detail: '', sourceFact: '', replacement: '', repCustomOn: false };
     return S.drafts[sig];
   }
 
@@ -310,11 +310,15 @@
       if (!facts.length || facts.some(hasSlot)) return null;
       return { kind: 'facts', facts, keepEval: q.canKeepEval && d.keepEval };
     }
-    if (action === 'source') return d.sourceFact.trim() ? { kind: 'facts', facts: [d.sourceFact.trim()], keepEval: q.canKeepEval && d.keepEval } : null;
-    if (action === 'detail') return d.detail.trim() ? { kind: 'detail', detail: d.detail } : null;
+    if (action === 'source') return d.sourceFact.trim() && !hasSlot(d.sourceFact) ? { kind: 'facts', facts: [d.sourceFact.trim()], keepEval: q.canKeepEval && d.keepEval } : null;
+    if (action === 'detail') return d.detail.trim() && !hasSlot(d.detail) ? { kind: 'detail', detail: d.detail } : null;
     if (action === 'delete') return { kind: 'delete' };
     if (action === 'restyle') return { kind: 'restyle' };
-    if (action === 'replace') return { kind: 'replace' };
+    if (action === 'replace') {
+      const alts = issue.replacements && issue.replacements.length ? issue.replacements : [issue.replacement];
+      const rep = (d.replacement || alts[0] || '').trim();
+      return rep ? { kind: 'replace', replacement: rep } : null;
+    }
     if (action === 'keep') return { kind: 'keep', confirmed: issue.type === 'source' };
     return null;
   }
@@ -361,13 +365,22 @@
           ${q.canKeepEval ? `<label class="row small" style="margin:8px 0 0"><input type="checkbox" data-act="draft-keepeval" data-sig="${sig}" ${d.keepEval ? 'checked' : ''}> 근거를 쓴 뒤 평가 표현도 남기기</label>` : ''}`;
       }
     } else if (action === 'detail') {
+      const tpl = q.templates || [];
       body = `<div class="q">${esc(q.prompt)}</div>
+        ${tpl.length ? `<div class="tpl-label">문장 틀을 고르고 〔 〕 칸만 채우세요 <span class="faint">— 직접 쓰셔도 됩니다</span></div>
+          <div class="tpl-list">${tpl.map((t, k) => `<button class="tpl ${d.detail === t ? 'on' : ''}" type="button" data-act="use-template" data-sig="${sig}" data-k="${k}">${esc(t)}</button>`).join('')}</div>` : ''}
         <input type="text" id="detail-${sig.length}" data-input="draft-detail" data-sig="${sig}" value="${esc(d.detail)}" placeholder="${esc(q.customPlaceholder)}">
+        ${hasSlot(d.detail) ? '<div class="small" style="color:var(--amber);margin-top:6px">〔 〕 칸을 실제 관찰 내용으로 채우면 적용할 수 있습니다.</div>' : ''}
         ${q.sourceHits.length ? `<div class="small muted" style="margin-top:8px">자료 참고: ${q.sourceHits.map((h) => `“${esc(h.text)}”`).join(' ')}</div>` : ''}`;
     } else if (action === 'delete') {
       body = `<div class="q">${issue.type === 'forbidden' ? '기재 금지 표현이 들어 있는 부분을 지우고 문장을 자연스럽게 닫습니다.' : issue.type === 'evidence' ? '근거가 없는 평가 표현을 지우고 문장을 자연스럽게 다시 닫습니다.' : '해당 부분을 지웁니다.'}</div>`;
     } else if (action === 'replace') {
-      body = `<div class="q">‘${esc(issue.matches[0])}’을(를) 상위 일반어 ‘${esc(issue.replacement)}’(으)로 바꿉니다. 조사도 함께 맞춥니다.</div>`;
+      const alts = issue.replacements && issue.replacements.length ? issue.replacements : [issue.replacement];
+      const chosen = d.replacement || alts[0];
+      body = `<div class="q">‘${esc(issue.matches[0])}’ 대신 쓸 상위 일반어를 고르세요 <span class="faint small">조사는 자동으로 맞춥니다</span></div>
+        ${alts.map((r, k) => `<label class="opt"><input type="radio" name="rep-${sig.length}" data-act="use-replacement" data-sig="${sig}" data-k="${k}" ${chosen === r && !d.repCustomOn ? 'checked' : ''}><span class="opt-text">${esc(r)}</span></label>`).join('')}
+        <label class="opt"><input type="radio" name="rep-${sig.length}" data-act="rep-custom" data-sig="${sig}" ${d.repCustomOn ? 'checked' : ''}>
+          <span class="opt-text">${d.repCustomOn ? `<input type="text" id="repc-${sig.length}" data-input="draft-replacement" data-sig="${sig}" value="${esc(d.replacement || '')}" placeholder="직접 입력 (예: 검색 사이트)">` : '직접 입력'}</span></label>`;
     } else if (action === 'keep') {
       body = `<div class="q">${issue.type === 'source' ? '선생님이 직접 확인한 내용이면 그대로 둡니다. ‘교사 확인’으로 기록됩니다.' : '문제가 없다고 판단하시면 그대로 둡니다.'}</div>`;
     } else if (action === 'restyle') {
@@ -819,7 +832,7 @@
   function classAnswer(q, d) {
     if (d.none && q.none) return q.none.answer;
     if (q.mode === 'choice') return d.choice >= 0 ? q.choices[d.choice].answer : null;
-    if (q.mode === 'text') return d.detail.trim() ? { kind: 'detail', detail: d.detail } : null;
+    if (q.mode === 'text') return d.detail.trim() && !hasSlot(d.detail) ? { kind: 'detail', detail: d.detail } : null;
     if (q.mode !== 'multi') return null;
     const pool = [...q.candidates, ...q.sourceHits.map((h) => h.text)];
     const facts = d.checked.map((k) => (d.edits[k] != null ? d.edits[k] : pool[k])).filter((f) => f && f.trim());
@@ -837,7 +850,10 @@
     if (q.mode === 'choice') {
       body = q.choices.map((ch, j) => `<label class="opt"><input type="radio" name="q-${k}" data-act="c-choice" data-sig="${sig}" data-k="${j}" ${d.choice === j ? 'checked' : ''}><span class="opt-text">${esc(ch.label)}</span></label>`).join('');
     } else if (q.mode === 'text') {
-      body = `<input type="text" id="cdetail-${k}" data-input="c-detail" data-sig="${sig}" value="${esc(d.detail)}" placeholder="${esc(q.customPlaceholder)}" ${d.none ? 'disabled' : ''}>
+      body = `${(q.templates || []).length && !d.none ? `<div class="tpl-label">문장 틀을 고르고 〔 〕 칸만 채우세요</div>
+        <div class="tpl-list">${q.templates.map((t, j) => `<button class="tpl ${d.detail === t ? 'on' : ''}" type="button" data-act="c-template" data-sig="${sig}" data-k="${j}">${esc(t)}</button>`).join('')}</div>` : ''}
+        <input type="text" id="cdetail-${k}" data-input="c-detail" data-sig="${sig}" value="${esc(d.detail)}" placeholder="${esc(q.customPlaceholder)}" ${d.none ? 'disabled' : ''}>
+        ${hasSlot(d.detail) ? '<div class="small" style="color:var(--amber);margin-top:4px">〔 〕 칸을 채우면 적용할 수 있습니다.</div>' : ''}
         ${q.sourceHits.length ? `<div class="small muted" style="margin-top:6px">자료 참고: ${q.sourceHits.map((h) => `“${esc(h.text)}”`).join(' ')}</div>` : ''}
         <label class="opt none"><input type="checkbox" data-act="c-none" data-sig="${sig}" ${d.none ? 'checked' : ''}><span class="opt-text">${esc(q.none.label)}</span></label>`;
     } else {
@@ -1119,6 +1135,34 @@
         break;
       case 'draft-keepeval':
         draftFor(sig).keepEval = el.checked; updatePreview(sig); break;
+      case 'use-template': {
+        const issue = currentIssue(sig);
+        const q = E.buildQuestion(issue, S.audit, { sources: S.source });
+        const d = draftFor(sig);
+        d.detail = (q.templates || [])[Number(el.dataset.k)] || '';
+        render();
+        const input = document.querySelector(`[data-input="draft-detail"][data-sig="${CSS.escape(sig)}"]`);
+        if (input) { input.focus(); const at = input.value.indexOf('〔'); if (at >= 0) input.setSelectionRange(at, input.value.indexOf('〕', at) + 1); }
+        break;
+      }
+      case 'use-replacement': {
+        const issue = currentIssue(sig);
+        const alts = issue.replacements && issue.replacements.length ? issue.replacements : [issue.replacement];
+        const d = draftFor(sig);
+        d.replacement = alts[Number(el.dataset.k)];
+        d.repCustomOn = false;
+        render();
+        break;
+      }
+      case 'rep-custom': {
+        const d = draftFor(sig);
+        d.repCustomOn = true;
+        d.replacement = '';
+        render();
+        const input = document.querySelector('[data-input="draft-replacement"]');
+        if (input) input.focus();
+        break;
+      }
       case 'use-source': {
         const issue = currentIssue(sig);
         const q = E.buildQuestion(issue, S.audit, { sources: S.source });
@@ -1197,6 +1241,18 @@
       }
       case 'c-custom':
         cdraft(C.queue[C.pos], sig).customOn = el.checked; render(); break;
+      case 'c-template': {
+        const id = C.queue[C.pos];
+        const item = classQuestions(id).find((x) => x.issue.signature === sig);
+        const d = cdraft(id, sig);
+        d.detail = (item.question.templates || [])[Number(el.dataset.k)] || '';
+        render();
+        const items = classQuestions(id);
+        const k = items.findIndex((x) => x.issue.signature === sig);
+        const input = document.querySelector(`#qc-${k} [data-input="c-detail"]`);
+        if (input) { input.focus(); const at = input.value.indexOf('〔'); if (at >= 0) input.setSelectionRange(at, input.value.indexOf('〕', at) + 1); }
+        break;
+      }
       case 'c-none': {
         const d = cdraft(C.queue[C.pos], sig);
         d.none = el.checked;
@@ -1238,6 +1294,7 @@
       if (kind === 'draft-custom-text') d.custom = el.value;
       if (kind === 'draft-detail') d.detail = el.value;
       if (kind === 'draft-source') d.sourceFact = el.value;
+      if (kind === 'draft-replacement') d.replacement = el.value;
       updatePreview(sig);
       return;
     }
