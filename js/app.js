@@ -67,24 +67,33 @@
     stage: 'input', original: '', text: '', source: '',
     facts: [], confirmed: 0, dismissed: new Set(), verified: new Set(), history: [],
     audit: null, first: null, panel: null, drafts: {},
+    cases: [{ original: '', text: '', source: '', facts: [], confirmed: 0, dismissed: new Set(), verified: new Set(), history: [], first: null, stage: 'input' }],
+    idx: 0,
   };
 
   function reauditSingle() {
     S.audit = E.audit(S.text, { sources: S.source, dismissed: S.dismissed, verified: S.verified });
+    if (S.cases) S.cases[S.idx] = packCase(); // 사례를 옮겨 다녀도 작업 내용이 남는다
   }
 
   function snapshot() {
     return { text: S.text, facts: [...S.facts], confirmed: S.confirmed, dismissed: new Set(S.dismissed), verified: new Set(S.verified) };
   }
 
-  function startSingle(text, source) {
+  function startSingle(text, source, asNewCase) {
+    if (asNewCase && (S.original || '').trim()) {
+      saveCase();
+      S.cases.push({ original: '', text: '', source: '', facts: [], confirmed: 0, dismissed: new Set(), verified: new Set(), history: [], first: null, stage: 'input' });
+      S.idx = S.cases.length - 1;
+    }
     Object.assign(S, {
       stage: 'report', original: text.trim(), text: text.trim(), source: (source || '').trim(),
-      facts: [], confirmed: 0, dismissed: new Set(), verified: new Set(), history: [], panel: null, drafts: {},
+      facts: [], confirmed: 0, dismissed: new Set(), verified: new Set(), history: [], panel: null, drafts: {}, editing: false,
     });
     reauditSingle();
     S.first = S.audit;
     S.popStamp = true;
+    saveCase();
     location.hash = '#single';
     render();
     window.scrollTo({ top: 0 });
@@ -93,6 +102,53 @@
   function draftFor(sig) {
     if (!S.drafts[sig]) S.drafts[sig] = { checked: [], edits: {}, customOn: false, custom: '', keepEval: true, detail: '', sourceFact: '' };
     return S.drafts[sig];
+  }
+
+  /* ── 사례 이동: 여러 세특을 이어서 감사한다 ── */
+  function packCase() {
+    return {
+      original: S.original, text: S.text, source: S.source, facts: [...S.facts], confirmed: S.confirmed,
+      dismissed: new Set(S.dismissed), verified: new Set(S.verified), history: [...S.history], first: S.first, stage: S.stage,
+    };
+  }
+
+  function unpackCase(c) {
+    Object.assign(S, {
+      original: c.original, text: c.text, source: c.source, facts: [...c.facts], confirmed: c.confirmed,
+      dismissed: new Set(c.dismissed), verified: new Set(c.verified), history: [...c.history], first: c.first,
+      stage: c.stage, panel: null, drafts: {}, editing: false,
+    });
+    if (S.stage === 'report') reauditSingle(); else S.audit = null;
+  }
+
+  function saveCase() { S.cases[S.idx] = packCase(); }
+
+  function gotoCase(i) {
+    if (i < 0 || i >= S.cases.length) return;
+    saveCase();
+    S.idx = i;
+    unpackCase(S.cases[i]);
+    render();
+    window.scrollTo({ top: 0 });
+  }
+
+  function newCase() {
+    saveCase();
+    S.cases.push({ original: '', text: '', source: '', facts: [], confirmed: 0, dismissed: new Set(), verified: new Set(), history: [], first: null, stage: 'input' });
+    S.idx = S.cases.length - 1;
+    unpackCase(S.cases[S.idx]);
+    render();
+    window.scrollTo({ top: 0 });
+  }
+
+  function caseNav() {
+    const n = S.cases.length;
+    return `<div class="case-nav no-print">
+      <button class="btn btn-sm" type="button" data-act="case-prev" ${S.idx > 0 ? '' : 'disabled'}>‹ 이전</button>
+      <span class="case-count">${n}건 중 <b>${S.idx + 1}</b>번째 사례</span>
+      <button class="btn btn-sm" type="button" data-act="case-next" ${S.idx < n - 1 ? '' : 'disabled'}>다음 ›</button>
+      <button class="btn btn-sm" type="button" data-act="case-new">+ 새 사례</button>
+    </div>`;
   }
 
   function singleMetrics() {
@@ -119,6 +175,7 @@
       <figure class="art-wrap">${art.cover()}</figure>
       <div class="card card-pad stack">
         <div class="row" style="justify-content:space-between"><h2>세특 한 편 감사</h2><span class="pill-badge">개별 감사</span></div>
+        ${S.cases.length > 1 ? caseNav() : ''}
         <label class="field"><span>세특 원문</span>
           <textarea id="inText" rows="7" placeholder="과목별 세부능력 및 특기사항을 붙여넣으세요.">${esc(text)}</textarea>
         </label>
@@ -138,19 +195,51 @@
     ${legend()}`;
   }
 
+  /**
+   * 기록 렌더링 — 구절 지적은 형광펜(위험 빨강 / 주의 노랑), 글 전반 지적은 근거 범위에 엷은 점선 밑줄.
+   * 둘이 겹칠 수 있으므로 모든 경계로 잘라 구간마다 필요한 표시를 입힌다.
+   */
   function highlightDoc(text, issues, opts = {}) {
-    const list = [...issues].filter((i) => !i.global && i.end > i.start).sort((a, b) => a.start - b.start);
-    let html = '';
-    let pos = 0;
-    for (const i of list) {
-      if (i.start < pos) continue;
-      const label = opts.labels ? opts.labels[i.signature] : '';
-      html += esc(text.slice(pos, i.start));
-      html += `<mark class="hl ${i.severity} ${opts.active === i.signature ? 'active' : ''}" role="button" tabindex="0" data-act="focus-issue" data-sig="${esc(i.signature)}" title="${esc(i.gradeName)} · ${esc(i.label)} — 클릭하면 안내와 처방이 열립니다">${esc(text.slice(i.start, i.end))}<sup>${esc(label)}</sup></mark>`;
-      pos = i.end;
+    const spans = [];
+    const scopes = [];
+    for (const i of issues) {
+      if (i.global) scopes.push({ s: i.scopeStart || 0, e: i.scopeEnd == null ? text.length : i.scopeEnd, issue: i });
+      else if (i.end > i.start) spans.push({ s: i.start, e: i.end, issue: i });
     }
-    html += esc(text.slice(pos));
+    spans.sort((a, b) => a.s - b.s);
+    const cuts = new Set([0, text.length]);
+    [...spans, ...scopes].forEach((r) => { cuts.add(r.s); cuts.add(r.e); });
+    const points = [...cuts].filter((p) => p >= 0 && p <= text.length).sort((a, b) => a - b);
+    const label = (i) => (opts.labels ? opts.labels[i.signature] : '');
+    let html = '';
+    for (let k = 0; k < points.length - 1; k++) {
+      const s = points[k];
+      const e = points[k + 1];
+      if (e <= s) continue;
+      const span = spans.find((r) => s >= r.s && e <= r.e);
+      const scope = scopes.find((r) => s >= r.s && e <= r.e);
+      let out = esc(text.slice(s, e));
+      if (span) {
+        const i = span.issue;
+        out = `<mark class="hl ${i.severity} ${opts.active === i.signature ? 'active' : ''}" role="button" tabindex="0" data-act="focus-issue" data-sig="${esc(i.signature)}" title="${esc(i.gradeName)} · ${esc(i.label)} — 클릭하면 안내와 처방이 열립니다">${out}${e === span.e ? `<sup>${esc(label(i))}</sup>` : ''}</mark>`;
+      }
+      if (scope) {
+        const i = scope.issue;
+        out = `<span class="scope ${i.severity} ${opts.active === i.signature ? 'active' : ''}" data-act="focus-issue" data-sig="${esc(i.signature)}" title="글 전반 · ${esc(i.label)} — 클릭하면 안내와 처방이 열립니다">${out}</span>`;
+      }
+      html += out;
+    }
     return html;
+  }
+
+  /** 기록 위 ‘글 전반 지적’ 단서 */
+  function globalChips(issues, nums, activeSig) {
+    const g = issues.filter((i) => i.global);
+    if (!g.length) return '';
+    return `<div class="global-cues"><span class="cue-label">글 전반 지적 ${g.length}</span>
+      ${g.map((i) => `<button class="cue ${i.severity} ${activeSig === i.signature ? 'on' : ''}" type="button" data-act="focus-issue" data-sig="${esc(i.signature)}">
+        <span class="cue-no">${esc(nums[i.signature] || '')}</span>${esc(i.label)}</button>`).join('')}
+      <span class="faint small">점선 밑줄이 그 지적의 근거 범위입니다</span></div>`;
   }
 
   function issueNumbers(issues) {
@@ -353,7 +442,8 @@
               ${a.hasSource ? '<span class="pill blue">원자료 대조 ✓</span>' : ''}
             </div>
             <div class="muted small">${a.bytes.toLocaleString()} byte(한글 약 ${hangulChars(a.bytes)}자) / 1,500 byte</div>
-            <div class="row no-print"><button class="btn btn-sm" type="button" data-act="single-new">← 새 세특</button><button class="btn btn-sm" type="button" data-act="print">인쇄</button></div>
+            <div class="row no-print"><button class="btn btn-sm" type="button" data-act="single-new">이 사례 다시 입력</button><button class="btn btn-sm" type="button" data-act="print">인쇄</button></div>
+            ${caseNav()}
           </div>
           <div class="${pop ? 'pop' : ''}">${verdictTag(v, true)}</div>
         </div>
@@ -373,7 +463,8 @@
           <div class="row" style="justify-content:flex-end;margin-top:8px">
             <button class="btn btn-sm btn-ghost" type="button" data-act="edit-cancel">취소</button>
             <button class="btn btn-sm btn-primary" type="button" data-act="edit-save">저장 후 다시 감사</button></div>`
-        : `<div class="doc-wrap">
+        : `${globalChips(all, nums, S.panel && S.panel.sig)}
+          <div class="doc-wrap">
             <div class="doc">${highlightDoc(a.text, all, { active: S.panel && S.panel.sig, labels: nums }) || '<span class="faint">(빈 기록)</span>'}</div>
             ${active ? popoverHtml(active) : ''}
           </div>
@@ -965,7 +1056,13 @@
         break;
       }
       case 'single-new':
-        S.stage = 'input'; render(); break;
+        S.stage = 'input'; S.panel = null; saveCase(); render(); break;
+      case 'case-prev':
+        gotoCase(S.idx - 1); break;
+      case 'case-next':
+        gotoCase(S.idx + 1); break;
+      case 'case-new':
+        newCase(); toast(`새 사례를 추가했습니다 (${S.cases.length}번째)`); break;
       case 'print':
         window.print(); break;
       case 'focus-issue': {
@@ -1108,7 +1205,7 @@
       }
       case 'open-single': {
         const st = studentOf(el.dataset.id);
-        startSingle(st.text, st.source);
+        startSingle(st.text, st.source, true);
         toast(`${st.id} ${st.name} — 개별 감사 화면에서 보는 중입니다(학급 결과와는 따로 저장됩니다).`);
         break;
       }

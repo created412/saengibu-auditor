@@ -15,6 +15,7 @@
     knowledge: { label: '지식 단순 서술', criterion: 'evidence', grade: 'caution', ref: '95쪽' },
     selfvoice: { label: '학생 소감 어투', criterion: 'evidence', grade: 'caution', ref: '19쪽 5-나' },
     listing: { label: '활동 나열', criterion: 'process', grade: 'caution', ref: '95쪽' },
+    growth: { label: '성장 흐름 없음', criterion: null, grade: 'caution', ref: '95쪽 · 117쪽 가' },
     source: { label: '원자료 근거 불명', criterion: 'exag', grade: 'caution', ref: '19쪽 5-가' },
     vague: { label: '추상적 표현', criterion: 'specific', grade: 'caution', ref: '95쪽' },
     exag: { label: '과장 표현', criterion: 'exag', grade: 'caution', ref: '19쪽 5-가' },
@@ -400,11 +401,22 @@
       push('symbol', st, en, { why: '서술형 항목에는 특수문자와 문단 구분 기호(번호) 입력을 지양합니다.' });
     }
 
-    // ⑨ 활동 나열 (문장 전체에 걸친 주의)
+    // ⑨ 글 전반에 걸친 주의 — 형광펜을 칠할 구절이 없으므로 '근거 범위'를 달아 점선 밑줄로 표시한다
     const procCount0 = countMarkers(text, lex.PROCESS_MARKERS) + countQuotes(text);
+    const actSentences = sentences.filter((s) => s.clauses.some((c) => c.type === '행동'));
     const actCount0 = sentences.flatMap((s) => s.clauses).filter((c) => c.type === '행동').length;
     if (actCount0 >= 3 && procCount0 === 0) {
-      push('listing', 0, 0, { global: true, penalty: 10, why: '수업 활동이 나열되어 있고, 학생이 그 활동에서 무엇을 발견·판단·선택했는지가 없습니다.' });
+      push('listing', 0, 0, {
+        global: true, penalty: 10,
+        scopeStart: actSentences[0].start, scopeEnd: actSentences[actSentences.length - 1].end,
+        why: '수업 활동이 나열되어 있고, 학생이 그 활동에서 무엇을 발견·판단·선택했는지가 없습니다. 점선 밑줄 범위가 나열된 활동입니다.',
+      });
+    }
+    if (countMarkers(text, lex.GROWTH_MARKERS) === 0 && sentences.length >= 3) {
+      push('growth', 0, 0, {
+        global: true, penalty: 0, scopeStart: 0, scopeEnd: text.length,
+        why: '처음 생각 → 탐구 → 변화·심화의 흐름이 보이지 않습니다. 학생이 생각을 바꾼 지점이 있으면 한 문장으로 남기면 좋습니다(분량이 짧으면 없는 것이 자연스럽습니다).',
+      });
     }
 
     issues.sort((a, b) => (a.grade === b.grade ? a.start - b.start : a.grade === 'danger' ? -1 : 1));
@@ -446,8 +458,7 @@
     const weightOf = (crit) => (lex.CRITERIA.find((c) => c.key === crit) || { weight: 0 }).weight;
     issues.forEach((i) => { i.gain = i.criterion ? +(weightOf(i.criterion) * i.penalty).toFixed(1) : 0.3; });
 
-    const notes = [];
-    if (growthCount === 0 && sentences.length >= 3) notes.push({ kind: 'growth', text: '처음 생각 → 탐구 → 변화·심화의 흐름이 보이지 않습니다(분량이 짧으면 자연스러운 일입니다).' });
+    const notes = []; // 글 전반 지적은 이제 issues(global)로 다룬다
 
     return {
       text, sentences, issues, dismissedIssues, scores, overall, notes,
@@ -530,6 +541,15 @@
           mode: 'text', candidates: [], allowCustom: true,
           customPlaceholder: '예: 배차 간격 표에서 출근 시간대의 공백을 찾아 노선 조정안을 제시함',
           none: { label: '떠오르는 장면 없음 → 그대로 두기', answer: { kind: 'keep' } },
+          actions: ['detail', 'keep'],
+        };
+      case 'growth':
+        return {
+          ...q,
+          prompt: '탐구 전후로 학생의 생각이 달라진 지점이 있었나요? (있으면 한 문장)',
+          mode: 'text', candidates: [], allowCustom: true,
+          customPlaceholder: '예: 처음에는 쇄국만 보고 보수적이라고 판단했으나 호포제 자료를 읽은 뒤 판단을 수정함',
+          none: { label: '그런 장면은 없었음 → 그대로 두기 (분량이 짧으면 자연스러운 일입니다)', answer: { kind: 'keep' } },
           actions: ['detail', 'keep'],
         };
       case 'overflow':
@@ -701,7 +721,7 @@
       res.changed = out !== text;
       return res;
     }
-    if (issue.type === 'listing' && answer.kind === 'detail') {
+    if ((issue.type === 'listing' || issue.type === 'growth') && answer.kind === 'detail') {
       const detail = String(answer.detail || '').trim();
       if (!detail) return res;
       res.text = `${text.replace(/\s+$/, '')} ${ko.asRecordSentence(detail)}`.trim();
@@ -812,7 +832,7 @@
     return res;
   }
 
-  const APPLY_ORDER = { forbidden: 0, symbol: 1, exag: 1, cliche: 2, vague: 2, knowledge: 3, selfvoice: 3, source: 4, evidence: 5, style: 6, listing: 7, overflow: 8 };
+  const APPLY_ORDER = { forbidden: 0, symbol: 1, exag: 1, cliche: 2, vague: 2, knowledge: 3, selfvoice: 3, source: 4, evidence: 5, style: 6, listing: 7, growth: 7, overflow: 8 };
 
   /**
    * 한 학생의 여러 응답을 한꺼번에 적용. 지우는 처방 먼저, 문장을 닫거나 사실을 덧붙이는 처방은 나중에.

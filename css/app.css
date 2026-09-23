@@ -207,6 +207,31 @@ details.source-box summary { cursor: pointer; font-weight: 700; color: var(--ink
 .diff-box { margin-top: 12px; border: 2px dashed var(--line); border-radius: 12px; padding: 8px 12px; }
 .diff-box summary { cursor: pointer; font-weight: 700; font-size: 13px; color: var(--ink-2); }
 
+/* 글 전반 지적 — 근거 범위에 엷은 점선 밑줄 + 기록 위 단서 */
+.global-cues { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0 0 10px; }
+.cue-label { font: 700 13px/1.4 var(--sans); color: var(--ink-2); }
+.cue {
+  display: inline-flex; align-items: center; gap: 6px; cursor: pointer;
+  border: 2px dashed var(--amber-line); background: var(--amber-bg); color: var(--amber);
+  padding: 4px 12px; border-radius: 999px; font-size: 13px; font-weight: 700;
+}
+.cue:hover { filter: brightness(.97); }
+.cue.on { border-style: solid; background: var(--amber-line); color: #3d2705; }
+.cue.red { border-color: #e7b3ad; background: var(--red-bg); color: var(--red); }
+.cue.red.on { background: var(--red); color: #fff; }
+.cue-no { width: 17px; height: 17px; border-radius: 50%; background: currentColor; color: transparent; font: 700 10px/17px var(--sans); text-align: center; }
+.cue .cue-no { color: #fff; background: var(--amber-line); }
+.cue.red .cue-no { background: var(--red); }
+.cue.on .cue-no { background: #fff; color: var(--ink); }
+.scope { cursor: pointer; border-bottom: 1.5px dotted rgba(176, 111, 12, .45); padding-bottom: 2px; }
+.scope.red { border-bottom-color: rgba(207, 66, 54, .45); }
+.scope.active { border-bottom-width: 3px; background: rgba(255, 206, 56, .14); }
+.scope.red.active { background: rgba(240, 104, 94, .12); }
+
+.case-nav { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.case-count { font-size: 13px; color: var(--ink-2); }
+.case-count b { font-family: var(--display); font-weight: 400; font-size: 16px; }
+
 .doc-wrap { position: relative; }
 .doc { font-size: 17.5px; line-height: 2.2; padding: 22px 24px; background: #fffdf7; border: 2px solid var(--line-2); border-radius: 14px; word-break: keep-all; }
 /* 형광펜: 위험=빨강, 주의=노랑 — 마커로 그은 듯한 띠 */
