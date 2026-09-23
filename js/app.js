@@ -100,7 +100,7 @@
   }
 
   function draftFor(sig) {
-    if (!S.drafts[sig]) S.drafts[sig] = { checked: [], edits: {}, customOn: false, custom: '', keepEval: true, detail: '', sourceFact: '', replacement: '', repCustomOn: false };
+    if (!S.drafts[sig]) S.drafts[sig] = { checked: [], edits: {}, customOn: false, custom: '', keepEval: true, detail: '', sourceFact: '', replacement: '', repCustomOn: false, target: '', rewrite: '' };
     return S.drafts[sig];
   }
 
@@ -283,7 +283,8 @@
 
   const ACTION_LABEL = {
     source: '📄 자료에서 근거 찾기', observe: '✍️ 내가 관찰한 내용 추가', delete: '✂️ 문제 표현 삭제',
-    keep: '✔ 확인 후 유지', detail: '✍️ 구체 내용 채우기', restyle: '명사형으로 고치기', replace: '🔁 대체어로 바꾸기',
+    keep: '✔ 확인 후 유지', detail: '➕ 맨 뒤에 한 문장 더하기', restyle: '명사형으로 고치기', replace: '🔁 대체어로 바꾸기',
+    rewrite: '✍️ 이 문장 고쳐 쓰기',
   };
 
   function actionLabel(issue, act) {
@@ -312,6 +313,13 @@
     }
     if (action === 'source') return d.sourceFact.trim() && !hasSlot(d.sourceFact) ? { kind: 'facts', facts: [d.sourceFact.trim()], keepEval: q.canKeepEval && d.keepEval } : null;
     if (action === 'detail') return d.detail.trim() && !hasSlot(d.detail) ? { kind: 'detail', detail: d.detail } : null;
+    if (action === 'rewrite') {
+      const targets = q.targets || [];
+      const target = d.target || (targets.length === 1 ? targets[0] : '');
+      const next = (d.rewrite != null && d.rewrite !== '' ? d.rewrite : target).trim();
+      if (!target || !next || hasSlot(next) || next === target) return null;
+      return { kind: 'rewriteSentence', target, text: next };
+    }
     if (action === 'delete') return { kind: 'delete' };
     if (action === 'restyle') return { kind: 'restyle' };
     if (action === 'replace') {
@@ -372,6 +380,22 @@
         <input type="text" id="detail-${sig.length}" data-input="draft-detail" data-sig="${sig}" value="${esc(d.detail)}" placeholder="${esc(q.customPlaceholder)}">
         ${hasSlot(d.detail) ? '<div class="small" style="color:var(--amber);margin-top:6px">〔 〕 칸을 실제 관찰 내용으로 채우면 적용할 수 있습니다.</div>' : ''}
         ${q.sourceHits.length ? `<div class="small muted" style="margin-top:8px">자료 참고: ${q.sourceHits.map((h) => `“${esc(h.text)}”`).join(' ')}</div>` : ''}`;
+    } else if (action === 'rewrite') {
+      const targets = q.targets || [];
+      const picked = d.target || (targets.length === 1 ? targets[0] : '');
+      if (!picked) {
+        body = `<div class="q">어느 문장을 고칠까요?</div>
+          <div class="tpl-list">${targets.map((t, k) => `<button class="tpl" type="button" data-act="pick-target" data-sig="${sig}" data-k="${k}">${esc(t)}</button>`).join('')}</div>`;
+      } else {
+        const sugg = [...(q.suggestions || []), ...(q.templates || [])];
+        body = `<div class="q">이 문장을 고쳐 씁니다 <span class="faint small">원문을 손보거나 아래 추천·틀을 눌러 넣으세요</span></div>
+          <div class="orig-line">원문: ${esc(picked)}</div>
+          ${targets.length > 1 ? `<button class="btn btn-sm btn-ghost" type="button" data-act="pick-target" data-sig="${sig}" data-k="-1">다른 문장 고르기</button>` : ''}
+          <textarea id="rw-${sig.length}" rows="3" data-input="draft-rewrite" data-sig="${sig}" placeholder="${esc(picked)}">${esc(d.rewrite != null && d.rewrite !== '' ? d.rewrite : picked)}</textarea>
+          ${sugg.length ? `<div class="tpl-label" style="margin-top:8px">추천 문장 · 문장 틀 <span class="faint">— 누르면 위 칸에 들어갑니다</span></div>
+            <div class="tpl-list">${sugg.map((t, k) => `<button class="tpl ${d.rewrite === t ? 'on' : ''}" type="button" data-act="use-rewrite" data-sig="${sig}" data-k="${k}">${esc(t)}</button>`).join('')}</div>` : ''}
+          ${hasSlot(d.rewrite) ? '<div class="small" style="color:var(--amber)">〔 〕 칸을 실제 관찰 내용으로 채우면 적용할 수 있습니다.</div>' : ''}`;
+      }
     } else if (action === 'delete') {
       body = `<div class="q">${issue.type === 'forbidden' ? '기재 금지 표현이 들어 있는 부분을 지우고 문장을 자연스럽게 닫습니다.' : issue.type === 'evidence' ? '근거가 없는 평가 표현을 지우고 문장을 자연스럽게 다시 닫습니다.' : '해당 부분을 지웁니다.'}</div>`;
     } else if (action === 'replace') {
@@ -1093,7 +1117,8 @@
         if (!issue) return;
         if (S.panel && S.panel.sig === sig) { S.panel = null; render(); return; }
         const q = E.buildQuestion(issue, S.audit, { sources: S.source });
-        S.panel = { sig, action: q.actions.find((x) => x !== 'source' || S.source) || null };
+        const usable = (x) => x && q.actions.includes(x) && (x !== 'source' || S.source);
+        S.panel = { sig, action: usable(q.primary) ? q.primary : (q.actions.find((x) => x !== 'source' || S.source) || null) };
         render();
         const mark = document.querySelector('mark.hl.active');
         if (mark) {
@@ -1143,6 +1168,28 @@
         render();
         const input = document.querySelector(`[data-input="draft-detail"][data-sig="${CSS.escape(sig)}"]`);
         if (input) { input.focus(); const at = input.value.indexOf('〔'); if (at >= 0) input.setSelectionRange(at, input.value.indexOf('〕', at) + 1); }
+        break;
+      }
+      case 'pick-target': {
+        const issue = currentIssue(sig);
+        const q = E.buildQuestion(issue, S.audit, { sources: S.source });
+        const d = draftFor(sig);
+        const k = Number(el.dataset.k);
+        d.target = k < 0 ? '' : (q.targets || [])[k] || '';
+        d.rewrite = '';
+        render();
+        const ta = document.querySelector('[data-input="draft-rewrite"]');
+        if (ta) ta.focus();
+        break;
+      }
+      case 'use-rewrite': {
+        const issue = currentIssue(sig);
+        const q = E.buildQuestion(issue, S.audit, { sources: S.source });
+        const d = draftFor(sig);
+        d.rewrite = [...(q.suggestions || []), ...(q.templates || [])][Number(el.dataset.k)] || '';
+        render();
+        const ta = document.querySelector('[data-input="draft-rewrite"]');
+        if (ta) { ta.focus(); const at = ta.value.indexOf('〔'); if (at >= 0) ta.setSelectionRange(at, ta.value.indexOf('〕', at) + 1); }
         break;
       }
       case 'use-replacement': {
@@ -1295,6 +1342,7 @@
       if (kind === 'draft-detail') d.detail = el.value;
       if (kind === 'draft-source') d.sourceFact = el.value;
       if (kind === 'draft-replacement') d.replacement = el.value;
+      if (kind === 'draft-rewrite') d.rewrite = el.value;
       updatePreview(sig);
       return;
     }

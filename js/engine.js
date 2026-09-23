@@ -484,13 +484,50 @@
 
   /* ───────────── 처방: 교사에게 물어볼 질문 ───────────── */
 
+  /** 이슈 → 질문. 어떤 지적이든 ‘이 문장 고쳐 쓰기’로 그 자리에서 손볼 수 있다 */
   function buildQuestion(issue, auditResult, opts = {}) {
+    const q = buildQuestionBase(issue, auditResult, opts);
+    if (q.mode !== 'info' && q.targets && q.targets.length && !q.actions.includes('rewrite')) {
+      const at = Math.max(0, q.actions.findIndex((a) => a === 'delete' || a === 'keep'));
+      q.actions = [...q.actions.slice(0, at), 'rewrite', ...q.actions.slice(at)];
+    }
+    // 형광펜을 누르면 바로 열릴 처방 — 고르기 형식은 권장 선택지, 나머지는 유형별 기본
+    const byType = {
+      evidence: 'observe', cliche: 'observe', vague: 'detail',
+      knowledge: 'rewrite', selfvoice: 'rewrite', listing: 'rewrite', growth: 'rewrite',
+    };
+    q.primary = (q.mode === 'choice' && (q.choices.find((c) => c.primary) || {}).answer
+      ? q.choices.find((c) => c.primary).answer.kind
+      : byType[issue.type]) || q.actions[0] || null;
+    return q;
+  }
+
+  function buildQuestionBase(issue, auditResult, opts = {}) {
     const sent = issue.global ? null : sentenceAt(auditResult.sentences, issue.start);
     const sourceHits = opts.sources && sent ? findEvidence(opts.sources, sent.text) : [];
+    // 고쳐 쓸 대상 문장 — 구절 지적은 그 문장, 글 전반 지적은 근거 범위 안의 문장들
+    const targets = issue.global
+      ? auditResult.sentences.filter((s) => s.end > (issue.scopeStart || 0) && s.start < (issue.scopeEnd == null ? auditResult.text.length : issue.scopeEnd)).map((s) => s.text)
+      : (sent ? [sent.text] : []);
+    // 추천 문장 — 형광펜 구절을 지운 문장부터 보여 주고, 그 뒤에 문장 틀
+    const suggestions = [];
+    if (sent && !issue.global) {
+      const tries = [];
+      if (issue.mode === 'replace') (issue.replacements || [issue.replacement]).slice(0, 2).forEach((r) => tries.push({ kind: 'replace', replacement: r }));
+      if (issue.type === 'style') tries.push({ kind: 'restyle' });
+      tries.push({ kind: 'delete' });
+      for (const ans of tries) {
+        try {
+          // 문장 하나만 넘겨 그 문장의 수정안을 얻는다
+          const out = applyAnswer(sent.text, issue, ans).text.trim();
+          if (out && out !== sent.text && !suggestions.includes(out)) suggestions.push(out);
+        } catch (e) { /* 추천 실패는 무시 */ }
+      }
+    }
     const candidates = lex.CANDIDATES[issue.cat] || lex.CANDIDATES.thinking;
     // 빈칸만 주지 않고 고를 수 있는 문장 틀을 함께 준다
-    const templates = lex.TEMPLATES[issue.type === 'vague' ? issue.kind : issue.type] || [];
-    const q = { issueId: issue.id, type: issue.type, grade: issue.grade, sourceHits, templates };
+    const templates = lex.TEMPLATES[issue.type === 'vague' ? issue.kind : issue.type] || lex.TEMPLATES.listing;
+    const q = { issueId: issue.id, type: issue.type, grade: issue.grade, sourceHits, templates, targets, suggestions };
     const noneDelete = { label: '관찰한 내용 없음 → 이 문장 삭제', answer: { kind: 'delete' } };
 
     switch (issue.type) {
@@ -547,7 +584,7 @@
           mode: 'text', candidates: [], allowCustom: true,
           customPlaceholder: '예: 배차 간격 표에서 출근 시간대의 공백을 찾아 노선 조정안을 제시함',
           none: { label: '떠오르는 장면 없음 → 그대로 두기', answer: { kind: 'keep' } },
-          actions: ['detail', 'keep'],
+          actions: ['rewrite', 'detail', 'keep'],
         };
       case 'growth':
         return {
@@ -556,7 +593,7 @@
           mode: 'text', candidates: [], allowCustom: true,
           customPlaceholder: '예: 처음에는 쇄국만 보고 보수적이라고 판단했으나 호포제 자료를 읽은 뒤 판단을 수정함',
           none: { label: '그런 장면은 없었음 → 그대로 두기 (분량이 짧으면 자연스러운 일입니다)', answer: { kind: 'keep' } },
-          actions: ['detail', 'keep'],
+          actions: ['rewrite', 'detail', 'keep'],
         };
       case 'overflow':
         return { ...q, prompt: issue.why, mode: 'info', choices: [], actions: [] };
@@ -729,6 +766,19 @@
       res.changed = out !== text;
       return res;
     }
+    // 문장 고쳐 쓰기 — 형광펜이 걸린 문장(또는 교사가 고른 문장)을 교사가 쓴 문장으로 그 자리에서 교체
+    if (answer.kind === 'rewriteSentence') {
+      const target = String(answer.target || '').trim();
+      const next = String(answer.text || '').trim();
+      if (!target || !next) return res;
+      const at = text.indexOf(target);
+      if (at === -1) return res;
+      res.text = replaceRange(text, at, at + target.length, ko.asRecordSentence(next));
+      res.facts = [next];
+      res.changed = res.text !== text;
+      return res;
+    }
+
     if ((issue.type === 'listing' || issue.type === 'growth') && answer.kind === 'detail') {
       const detail = String(answer.detail || '').trim();
       if (!detail) return res;

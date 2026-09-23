@@ -321,6 +321,9 @@ mark.hl.amber sup { background: #a97b10; }
 .opt .opt-text { flex: 1; font-size: 14px; }
 .opt input[type="text"] { padding: 4px 9px; font-size: 14px; }
 .opt.none { color: var(--ink-2); }
+.orig-line { font-size: 13px; color: var(--ink-2); background: #fff; border: 2px solid var(--line-2); border-radius: 10px; padding: 7px 10px; margin-bottom: 8px; }
+.panel textarea { min-height: 70px; }
+
 /* 문장 틀 고르기 — 빈칸만 주지 않는다 */
 .tpl-label { font-size: 12.5px; font-weight: 700; color: var(--ink-2); margin: 2px 0 6px; }
 .tpl-list { display: grid; gap: 5px; margin-bottom: 9px; }
