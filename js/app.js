@@ -141,13 +141,14 @@
     window.scrollTo({ top: 0 });
   }
 
-  function caseNav() {
+  function caseNav(opts = {}) {
     const n = S.cases.length;
     return `<div class="case-nav no-print">
-      <button class="btn btn-sm" type="button" data-act="case-prev" ${S.idx > 0 ? '' : 'disabled'}>‹ 이전</button>
-      <span class="case-count">${n}건 중 <b>${S.idx + 1}</b>번째 사례</span>
-      <button class="btn btn-sm" type="button" data-act="case-next" ${S.idx < n - 1 ? '' : 'disabled'}>다음 ›</button>
-      <button class="btn btn-sm" type="button" data-act="case-new">+ 새 사례</button>
+      <button class="btn btn-primary ${opts.big ? '' : 'btn-sm'}" type="button" data-act="case-new">+ 다른 세특 감사하기</button>
+      ${n > 1 ? `<span class="case-sep"></span>
+        <button class="btn btn-sm" type="button" data-act="case-prev" ${S.idx > 0 ? '' : 'disabled'}>‹ 이전 세특</button>
+        <span class="case-count">세특 <b>${S.idx + 1}</b> / ${n}</span>
+        <button class="btn btn-sm" type="button" data-act="case-next" ${S.idx < n - 1 ? '' : 'disabled'}>다음 세특 ›</button>` : ''}
     </div>`;
   }
 
@@ -479,8 +480,9 @@
               ${a.hasSource ? '<span class="pill blue">원자료 대조 ✓</span>' : ''}
             </div>
             <div class="muted small">${a.bytes.toLocaleString()} byte(한글 약 ${hangulChars(a.bytes)}자) / 1,500 byte</div>
-            <div class="row no-print"><button class="btn btn-sm" type="button" data-act="single-new">이 사례 다시 입력</button><button class="btn btn-sm" type="button" data-act="print">인쇄</button></div>
-            ${caseNav()}
+            <div class="row no-print"><button class="btn btn-sm" type="button" data-act="single-new">이 세특 다시 입력</button><button class="btn btn-sm" type="button" data-act="print">인쇄</button></div>
+            ${caseNav({ big: true })}
+            <div class="faint small">다른 학생 세특을 이어서 보시려면 위 파란 버튼을 누르세요. 입력 화면으로 가고, 지금 세특은 그대로 남습니다.</div>
           </div>
           <div class="${pop ? 'pop' : ''}">${verdictTag(v, true)}</div>
         </div>
@@ -516,6 +518,7 @@
           <button class="btn btn-sm" type="button" data-act="reset-original" ${S.text !== S.original ? '' : 'disabled'}>원문으로</button>
           <div class="spacer"></div>
           <button class="btn btn-sm" type="button" data-act="copy">📋 나이스용 복사</button>
+          <button class="btn btn-primary btn-sm" type="button" data-act="case-new">+ 다른 세특 감사하기</button>
         </div>
         ${S.text !== S.original ? `<details class="diff-box"><summary>수정 전 · 후 비교</summary><div class="preview">${diffHtml(S.original, S.text)}</div></details>` : ''}
 

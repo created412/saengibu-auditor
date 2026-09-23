@@ -229,8 +229,11 @@ details.source-box summary { cursor: pointer; font-weight: 700; color: var(--ink
 .scope.red.active { background: rgba(240, 104, 94, .12); }
 
 .case-nav { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.case-nav .btn-primary { box-shadow: 0 3px 0 #2d548c; }
+.case-nav .btn-primary:active { box-shadow: 0 1px 0 #2d548c; }
+.case-sep { width: 1px; height: 22px; background: var(--line); margin: 0 2px; }
 .case-count { font-size: 13px; color: var(--ink-2); }
-.case-count b { font-family: var(--display); font-weight: 400; font-size: 16px; }
+.case-count b { font-family: var(--display); font-weight: 400; font-size: 17px; }
 
 .doc-wrap { position: relative; }
 .doc { font-size: 17.5px; line-height: 2.2; padding: 22px 24px; background: #fffdf7; border: 2px solid var(--line-2); border-radius: 14px; word-break: keep-all; }
