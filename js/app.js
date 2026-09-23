@@ -146,7 +146,7 @@
       if (i.start < pos) continue;
       const label = opts.labels ? opts.labels[i.signature] : '';
       html += esc(text.slice(pos, i.start));
-      html += `<mark class="hl ${i.severity} ${opts.active === i.signature ? 'active' : ''}" data-act="focus-issue" data-sig="${esc(i.signature)}" title="${esc(i.gradeName)} · ${esc(i.label)}">${esc(text.slice(i.start, i.end))}<sup>${esc(label)}</sup></mark>`;
+      html += `<mark class="hl ${i.severity} ${opts.active === i.signature ? 'active' : ''}" role="button" tabindex="0" data-act="focus-issue" data-sig="${esc(i.signature)}" title="${esc(i.gradeName)} · ${esc(i.label)} — 클릭하면 안내와 처방이 열립니다">${esc(text.slice(i.start, i.end))}<sup>${esc(label)}</sup></mark>`;
       pos = i.end;
     }
     html += esc(text.slice(pos));
@@ -293,25 +293,40 @@
       </div></div>`;
   }
 
-  function issueCard(issue, no) {
+  /** 형광펜을 클릭했을 때 그 자리에 열리는 안내·처방 풍선 */
+  function popoverHtml(issue) {
     const q = E.buildQuestion(issue, S.audit, { sources: S.source });
-    const isActive = S.panel && S.panel.sig === issue.signature;
+    const action = S.panel.action;
     const danger = issue.grade === 'danger';
     const refs = issue.refs || (issue.ref ? [issue.ref] : []);
     const heading = issue.type === 'forbidden' ? issue.titles.join(' · ') : issue.label;
-    const quote = issue.global ? '' : `<div class="issue-quote">“${esc(issue.mode === 'replace' ? issue.matches.join('’, ‘') : issue.text)}”</div>`;
-    return `<div class="issue ${issue.severity} ${isActive ? 'active' : ''}" id="card-${esc(issue.id)}" data-sig="${esc(issue.signature)}">
-      <div class="issue-head"><span class="issue-no">${no}</span><div style="flex:1;min-width:0">
-        <div class="row" style="gap:6px"><span class="pill ${issue.severity}">${esc(issue.gradeName)}</span><b class="issue-title">${esc(heading)}</b>
-          ${refs.map((r) => `<span class="ref">기재요령 ${esc(r)}</span>`).join('')}</div>
-        ${quote}
-        <div class="issue-why">${esc(issue.why)}</div>
-      </div></div>
-      <div class="rx"><div class="rx-label">${danger ? '🚨 바로 수정' : '💊 3초 처방'}</div>
-        ${q.mode === 'info' ? '<div class="small muted">수정본을 직접 줄여 주세요. 줄인 뒤 다시 감사하면 사라집니다.</div>' : `
-        <div class="rx-actions">${q.actions.map((act) => `<button class="btn ${isActive && S.panel.action === act ? 'on' : ''}" type="button" data-act="rx" data-sig="${esc(issue.signature)}" data-action="${act}" ${act === 'source' && !S.source ? 'title="원자료를 넣으면 사용할 수 있습니다"' : ''}>${esc(actionLabel(issue, act))}</button>`).join('')}</div>
-        ${isActive ? panelHtml(issue, q, S.panel.action) : ''}`}
-      </div></div>`;
+    return `<div class="popover ${issue.severity}" id="popover" role="dialog" aria-label="${esc(issue.gradeName)} · ${esc(heading)}">
+      <button class="pop-close" type="button" data-act="panel-close" aria-label="닫기">✕</button>
+      <div class="pop-head"><span class="gtag ${issue.severity}">${esc(issue.gradeName)}</span><b>${esc(heading)}</b>
+        ${refs.map((r) => `<span class="ref">기재요령 ${esc(r)}</span>`).join('')}</div>
+      ${issue.global ? '' : `<div class="pop-quote">“${esc(issue.mode === 'replace' ? issue.matches.join('’, ‘') : issue.text)}”</div>`}
+      <div class="pop-why">${esc(issue.why)}</div>
+      ${q.mode === 'info' ? '<div class="small muted" style="margin-top:8px">아래 ‘직접 편집’으로 분량을 줄여 주세요. 줄이면 이 표시가 사라집니다.</div>' : `
+      <div class="rx-label">${danger ? '🚨 바로 수정 — 기재 금지' : '💊 3초 처방'}</div>
+      <div class="rx-actions">${q.actions.map((act) => `<button class="btn ${action === act ? 'on' : ''}" type="button" data-act="rx" data-sig="${esc(issue.signature)}" data-action="${act}" ${act === 'source' && !S.source ? 'title="원자료를 넣으면 사용할 수 있습니다"' : ''}>${esc(actionLabel(issue, act))}</button>`).join('')}</div>
+      ${action ? panelHtml(issue, q, action) : ''}`}
+    </div>`;
+  }
+
+  /** 형광펜 위치에 풍선을 붙인다 (좁은 화면에서는 CSS가 아래쪽 고정 시트로 바꿈) */
+  function positionPopover() {
+    const pop = document.getElementById('popover');
+    const wrap = document.querySelector('.doc-wrap');
+    if (!pop || !wrap) return;
+    const mark = wrap.querySelector('mark.hl.active');
+    if (!mark || window.matchMedia('(max-width: 760px)').matches) return;
+    // 풍선은 기록 바로 아래에 붙고, 화살표가 누른 형광펜을 가리킨다
+    const popBox = pop.getBoundingClientRect();
+    const box = mark.getBoundingClientRect();
+    const caret = box.left - popBox.left + box.width / 2;
+    pop.style.setProperty('--caret', `${Math.max(18, Math.min(caret, pop.offsetWidth - 18))}px`);
+    const over = popBox.bottom - window.innerHeight;
+    if (over > 0) window.scrollBy({ top: over + 16, behavior: 'smooth' });
   }
 
   function renderSingleReport() {
@@ -323,26 +338,68 @@
     const m = singleMetrics();
     const pop = S.popStamp; S.popStamp = false;
 
+    const active = S.panel && currentIssue(S.panel.sig);
+    const next = a.issues.find((i) => !active || i.signature !== active.signature) || a.issues[0];
+
     return `
-    <div class="report-grid">
-      <div class="stack">
-        <div class="card card-pad report-head-card">
-          <div class="report-head">
-            <div><span class="pill-badge">생기부 감사 결과</span><div class="score-big">${a.overall}<small> / 100</small></div><div class="small muted">품질 점수${f && f.overall !== a.overall ? ` · 처음 ${f.overall}점` : ''}</div></div>
-            <div class="head-mid stack" style="margin:0">
-              <div class="row" style="gap:8px">
-                <span class="gcount red ${a.danger.length ? '' : 'zero'}"><b>위험 ${a.danger.length}</b> 기재 금지 · 바로 수정</span>
-                <span class="gcount amber ${a.caution.length ? '' : 'zero'}"><b>주의 ${a.caution.length}</b> 수정 권장</span>
-                ${a.hasSource ? '<span class="pill blue">원자료 대조 ✓</span>' : ''}
-              </div>
-              <div class="muted small">${a.bytes.toLocaleString()} byte(한글 약 ${hangulChars(a.bytes)}자) / 1,500 byte</div>
-              <div class="row no-print"><button class="btn btn-sm" type="button" data-act="single-new">← 새 세특</button><button class="btn btn-sm" type="button" data-act="print">인쇄</button></div>
+    <div class="report">
+      <div class="card card-pad report-head-card">
+        <div class="report-head">
+          <div><span class="pill-badge">생기부 감사 결과</span><div class="score-big">${a.overall}<small> / 100</small></div><div class="small muted">품질 점수${f && f.overall !== a.overall ? ` · 처음 ${f.overall}점` : ''}</div></div>
+          <div class="head-mid stack" style="margin:0">
+            <div class="row" style="gap:8px">
+              <span class="gcount red ${a.danger.length ? '' : 'zero'}"><b>위험 ${a.danger.length}</b> 기재 금지 · 바로 수정</span>
+              <span class="gcount amber ${a.caution.length ? '' : 'zero'}"><b>주의 ${a.caution.length}</b> 수정 권장</span>
+              ${a.hasSource ? '<span class="pill blue">원자료 대조 ✓</span>' : ''}
             </div>
-            <div class="${pop ? 'pop' : ''}">${verdictTag(v, true)}</div>
+            <div class="muted small">${a.bytes.toLocaleString()} byte(한글 약 ${hangulChars(a.bytes)}자) / 1,500 byte</div>
+            <div class="row no-print"><button class="btn btn-sm" type="button" data-act="single-new">← 새 세특</button><button class="btn btn-sm" type="button" data-act="print">인쇄</button></div>
           </div>
-          ${a.danger.length ? `<div class="alert red">기재 금지 사항 ${a.danger.length}건이 남아 있어 <b>나이스에 입력할 수 없습니다.</b> 수정 작업대의 ‘위험’ 항목을 먼저 고쳐 주세요. 품질 점수와는 별개로 판정합니다.</div>` : ''}
+          <div class="${pop ? 'pop' : ''}">${verdictTag(v, true)}</div>
+        </div>
+        ${a.danger.length ? `<div class="alert red">기재 금지 사항 ${a.danger.length}건이 남아 있어 <b>나이스에 입력할 수 없습니다.</b> 아래 기록에서 <b>빨간 형광펜</b>을 눌러 먼저 고쳐 주세요. 품질 점수와는 별개로 판정합니다.</div>` : ''}
+      </div>
+
+      <div class="card card-pad work-card">
+        <div class="work-head">
+          <div><span class="pill-badge">감사 대상 기록 · 수정 작업대</span>
+            <p class="work-hint">형광펜을 클릭하면 <b>왜 문제인지</b>와 <b>처방</b>이 그 자리에 열립니다.
+              <span class="legend-inline"><span class="hl-chip red"></span>위험 ${a.danger.length}<span class="hl-chip amber"></span>주의 ${a.caution.length}</span></p></div>
+          <div class="score-flow"><span class="from">${f.overall}</span><span class="arrow">→</span><span style="color:var(--${barColor(a.overall)})">${a.overall}</span></div>
         </div>
 
+        ${S.editing ? `<textarea id="editText" rows="7">${esc(S.text)}</textarea>
+          <p class="faint small" style="margin:6px 0 0">교과 내용 속 낱말을 잘못 잡았거나 분량을 줄여야 할 때 직접 고치세요. 저장하면 다시 감사합니다.</p>
+          <div class="row" style="justify-content:flex-end;margin-top:8px">
+            <button class="btn btn-sm btn-ghost" type="button" data-act="edit-cancel">취소</button>
+            <button class="btn btn-sm btn-primary" type="button" data-act="edit-save">저장 후 다시 감사</button></div>`
+        : `<div class="doc-wrap">
+            <div class="doc">${highlightDoc(a.text, all, { active: S.panel && S.panel.sig, labels: nums }) || '<span class="faint">(빈 기록)</span>'}</div>
+            ${active ? popoverHtml(active) : ''}
+          </div>
+          ${all.length ? '' : `<div class="empty-ok"><div class="big">감사 통과 ✓</div><div class="muted small">위험·주의 사항이 모두 해결되었습니다. 나이스 입력 전에 한 번 더 읽어 주세요.</div></div>`}`}
+        ${a.notes.length ? `<div class="stack small muted" style="margin-top:10px">${a.notes.map((n) => `<div>ⓘ ${esc(n.text)}</div>`).join('')}</div>` : ''}
+        ${byteLine(S.text)}
+
+        <div class="work-bar no-print">
+          ${next ? `<button class="btn btn-primary btn-sm" type="button" data-act="focus-issue" data-sig="${esc(next.signature)}">${active ? '다음 표시로 ▸' : `표시 ${all.length}곳 중 첫 곳부터 ▸`}</button>` : ''}
+          ${S.editing ? '' : '<button class="btn btn-sm" type="button" data-act="edit-toggle">✏️ 직접 편집</button>'}
+          <button class="btn btn-sm" type="button" data-act="undo" ${S.history.length ? '' : 'disabled'}>↶ 되돌리기</button>
+          <button class="btn btn-sm" type="button" data-act="reset-original" ${S.text !== S.original ? '' : 'disabled'}>원문으로</button>
+          <div class="spacer"></div>
+          <button class="btn btn-sm" type="button" data-act="copy">📋 나이스용 복사</button>
+        </div>
+        ${S.text !== S.original ? `<details class="diff-box"><summary>수정 전 · 후 비교</summary><div class="preview">${diffHtml(S.original, S.text)}</div></details>` : ''}
+
+        <div class="ledger" style="margin-top:14px">
+          <div><strong>${m.facts}</strong><span>교사 확인 사실</span></div>
+          <div><strong>${m.improved}</strong><span>개선한 문장</span></div>
+          <div class="${m.aiAdded ? 'warn' : 'zero'}" title="${m.aiAdded ? esc(m.novel.join(', ')) : '원문·확인 사실에 없는 표현이 없습니다'}"><strong>${m.aiAdded}</strong><span>AI 임의 추가</span></div>
+        </div>
+        <p class="faint small" style="margin-top:12px">결과는 언제나 초안입니다. 기재요령(19쪽 5-다)에 따라 AI 보조 도구를 쓴 경우 최종 입력 전에 허위·과장 여부와 유의사항 준수를 선생님이 직접 확인해야 합니다.</p>
+      </div>
+
+      <div class="report-cols">
         <div class="card card-pad">
           <div class="row" style="justify-content:space-between;margin-bottom:14px"><h2>7대 감사기준</h2><span class="faint small">막대 위 세로선 = 처음 점수</span></div>
           ${criteriaBars(a.scores, f && f !== a ? f.scores : null)}
@@ -353,59 +410,18 @@
         </div>
 
         <div class="card card-pad">
-          <div class="row" style="justify-content:space-between;margin-bottom:12px"><h2>감사 대상 기록</h2>
-            <span class="faint small"><span class="swatch red"></span>위험 <span class="swatch amber"></span>주의 · 밑줄을 누르면 처방으로 이동</span></div>
-          <div class="doc">${highlightDoc(a.text, all, { active: S.panel && S.panel.sig, labels: nums }) || '<span class="faint">(빈 기록)</span>'}</div>
-          ${a.notes.length ? `<div class="stack small muted" style="margin-top:12px">${a.notes.map((n) => `<div>ⓘ ${esc(n.text)}</div>`).join('')}</div>` : ''}
-        </div>
-
-        <div class="card card-pad">
           <h2 style="margin-bottom:6px">증거 연결 분석</h2>
           <p class="small muted" style="margin:0 0 12px"><b>교사 평가 ← 학생 사고 ← 학생 행동</b> 사이에 증거 연결고리가 있는지 봅니다.</p>
           ${chainHtml()}
         </div>
       </div>
-
-      <aside class="workbench card card-pad">
-        <div class="row" style="justify-content:space-between">
-          <div><span class="pill-badge">수정 작업대</span><h2 style="margin-top:8px">진단 → 처방 → 수정</h2></div>
-          <div class="score-flow"><span class="from">${f.overall}</span><span class="arrow">→</span><span style="color:var(--${barColor(a.overall)})">${a.overall}</span></div>
-        </div>
-        <div class="ledger" style="margin:14px 0">
-          <div><strong>${m.facts}</strong><span>교사 확인 사실</span></div>
-          <div><strong>${m.improved}</strong><span>개선한 문장</span></div>
-          <div class="${m.aiAdded ? 'warn' : 'zero'}" title="${m.aiAdded ? esc(m.novel.join(', ')) : '원문·확인 사실에 없는 표현이 없습니다'}"><strong>${m.aiAdded}</strong><span>AI 임의 추가</span></div>
-        </div>
-
-        ${a.danger.length ? `<div class="grade-head red"><span class="gtag red">위험</span><b>기재 금지 · 바로 수정</b><span class="cnt">${a.danger.length}</span></div>
-          ${a.danger.map((i) => issueCard(i, nums[i.signature])).join('')}` : ''}
-        ${a.caution.length ? `<div class="grade-head amber"><span class="gtag amber">주의</span><b>수정 권장</b><span class="cnt">${a.caution.length}</span></div>
-          ${a.caution.map((i) => issueCard(i, nums[i.signature])).join('')}` : ''}
-        ${!all.length ? `<div class="empty-ok"><div class="big">감사 통과 ✓</div><div class="muted small">위험·주의 사항이 모두 해결되었습니다. 나이스 입력 전에 한 번 더 읽어 주세요.</div></div>` : ''}
-
-        <hr class="divider">
-        <div class="row" style="justify-content:space-between;margin-bottom:8px"><h3>수정본</h3>
-          ${S.editing ? '' : '<button class="btn btn-sm" type="button" data-act="edit-toggle">✏️ 직접 편집</button>'}</div>
-        ${S.editing ? `<textarea id="editText" rows="6">${esc(S.text)}</textarea>
-          <p class="faint small" style="margin:6px 0 0">교과 내용 속 낱말을 잘못 잡았거나 분량을 줄여야 할 때 직접 고치세요. 저장하면 다시 감사합니다.</p>
-          <div class="row" style="justify-content:flex-end;margin-top:8px">
-            <button class="btn btn-sm btn-ghost" type="button" data-act="edit-cancel">취소</button>
-            <button class="btn btn-sm btn-primary" type="button" data-act="edit-save">저장 후 다시 감사</button></div>`
-        : `<div class="preview" style="margin-top:0">${S.text === S.original ? esc(S.text) : diffHtml(S.original, S.text)}</div>`}
-        ${byteLine(S.text)}
-        <div class="row" style="margin-top:10px">
-          <button class="btn btn-sm" type="button" data-act="undo" ${S.history.length ? '' : 'disabled'}>↶ 되돌리기</button>
-          <button class="btn btn-sm" type="button" data-act="reset-original" ${S.text !== S.original ? '' : 'disabled'}>원문으로</button>
-          <button class="btn btn-sm" type="button" data-act="copy">복사</button>
-        </div>
-        <p class="faint small" style="margin-top:14px">결과는 언제나 초안입니다. 기재요령(19쪽 5-다)에 따라 AI 보조 도구를 쓴 경우 최종 입력 전에 허위·과장 여부와 유의사항 준수를 선생님이 직접 확인해야 합니다.</p>
-      </aside>
     </div>`;
   }
 
   function renderSingle() {
     const root = $('#view-single');
     keepScroll(() => { root.innerHTML = S.stage === 'input' ? renderSingleInput() : renderSingleReport(); });
+    if (S.panel) requestAnimationFrame(positionPopover);
   }
 
   function currentIssue(sig) {
@@ -929,6 +945,11 @@
     const go = ev.target.closest('[data-go]');
     if (go) { ev.preventDefault(); location.hash = `#${go.dataset.go}`; return; }
     const el = ev.target.closest('[data-act]');
+    // 형광펜 풍선 밖을 누르면 닫는다
+    if (S.panel && currentView() === 'single' && !ev.target.closest('.popover') && !ev.target.closest('mark.hl') && (!el || !['rx', 'panel-apply', 'panel-close', 'draft-check', 'draft-custom', 'draft-keepeval', 'use-source'].includes(el.dataset.act))) {
+      S.panel = null;
+      if (!el) { render(); return; }
+    }
     if (!el) return;
     const act = el.dataset.act;
     const sig = el.dataset.sig;
@@ -948,18 +969,31 @@
       case 'print':
         window.print(); break;
       case 'focus-issue': {
+        if (currentView() === 'class') { // 집중치료 화면: 형광펜 → 해당 질문으로 이동
+          const items = classQuestions(C.queue[C.pos]);
+          const k = items.findIndex((x) => x.issue.signature === sig);
+          const card = document.getElementById(`qc-${k}`);
+          if (card) { card.scrollIntoView({ behavior: 'smooth', block: 'center' }); card.classList.add('flash'); setTimeout(() => card.classList.remove('flash'), 1200); }
+          return;
+        }
         const issue = currentIssue(sig);
         if (!issue) return;
+        if (S.panel && S.panel.sig === sig) { S.panel = null; render(); return; }
         const q = E.buildQuestion(issue, S.audit, { sources: S.source });
-        if ((!S.panel || S.panel.sig !== sig) && q.actions.length) S.panel = { sig, action: q.actions.find((a) => a !== 'source' || S.source) };
+        S.panel = { sig, action: q.actions.find((x) => x !== 'source' || S.source) || null };
         render();
-        const card = document.getElementById(`card-${issue.id}`);
-        if (card) card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        const mark = document.querySelector('mark.hl.active');
+        if (mark) {
+          const box = mark.getBoundingClientRect();
+          if (box.top < 90 || box.bottom > window.innerHeight - 260) mark.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+        requestAnimationFrame(positionPopover);
         break;
       }
       case 'rx': {
         const action = el.dataset.action;
-        if (S.panel && S.panel.sig === sig && S.panel.action === action) S.panel = null;
+        // 같은 처방을 다시 누르면 그 처방만 접는다 (안내 풍선은 열어 둔다)
+        if (S.panel && S.panel.sig === sig && S.panel.action === action) S.panel = { sig, action: null };
         else S.panel = { sig, action };
         render();
         break;
@@ -1129,6 +1163,12 @@
   document.addEventListener('change', (ev) => {
     if (ev.target.id === 'clsFile' && ev.target.files[0]) readFile(ev.target.files[0]);
   });
+
+  document.addEventListener('keydown', (ev) => {
+    if (ev.key === 'Escape' && S.panel) { S.panel = null; render(); }
+  });
+
+  window.addEventListener('resize', () => { if (S.panel) positionPopover(); });
 
   const markEl = $('#brandMark');
   if (markEl) markEl.innerHTML = art.mark();

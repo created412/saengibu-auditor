@@ -192,14 +192,63 @@ details.source-box summary { cursor: pointer; font-weight: 700; color: var(--ink
 .swap { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 16px; align-items: center; border: 2px solid var(--line); border-radius: 14px; padding: 14px 16px; background: #fbfcfe; }
 .swap .pct { font: 400 38px/1 var(--display); font-variant-numeric: tabular-nums; }
 
-.doc { font-size: 17px; line-height: 2.1; padding: 20px 22px; background: #fbfcfe; border: 2px solid var(--line-2); border-radius: 14px; word-break: keep-all; }
-mark.hl { background: none; color: inherit; cursor: pointer; padding: 1px 0; border-bottom: 3px solid; }
-mark.hl.red { background: rgba(207, 66, 54, .12); border-color: var(--red); }
-mark.hl.amber { background: rgba(226, 162, 60, .16); border-color: var(--amber-line); }
-mark.hl.active { outline: 3px solid var(--blue); outline-offset: 2px; border-radius: 2px; }
-mark.hl sup { font: 700 10px/1 var(--sans); border-radius: 99px; padding: 2px 5px; margin-left: 2px; vertical-align: 6px; color: #fff; }
+/* ── 감사 대상 기록 = 수정 작업대 ── */
+.report { display: grid; gap: 20px; }
+.report-cols { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; }
+.work-card { position: relative; }
+.work-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; margin-bottom: 14px; }
+.work-hint { margin: 10px 0 0; font-size: 14px; color: var(--ink-2); }
+.legend-inline { display: inline-flex; align-items: center; gap: 6px; margin-left: 10px; font-weight: 700; font-size: 13px; }
+.hl-chip { display: inline-block; width: 22px; height: 12px; border-radius: 3px; }
+.hl-chip.red { background: rgba(240, 110, 100, .55); }
+.hl-chip.amber { background: rgba(255, 208, 60, .75); }
+.hl-chip.amber + span, .hl-chip.red + span { margin-right: 4px; }
+.work-bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 12px; }
+.diff-box { margin-top: 12px; border: 2px dashed var(--line); border-radius: 12px; padding: 8px 12px; }
+.diff-box summary { cursor: pointer; font-weight: 700; font-size: 13px; color: var(--ink-2); }
+
+.doc-wrap { position: relative; }
+.doc { font-size: 17.5px; line-height: 2.2; padding: 22px 24px; background: #fffdf7; border: 2px solid var(--line-2); border-radius: 14px; word-break: keep-all; }
+/* 형광펜: 위험=빨강, 주의=노랑 — 마커로 그은 듯한 띠 */
+mark.hl {
+  color: inherit; cursor: pointer; padding: 0 3px; border: 0; border-radius: 3px;
+  background-image: linear-gradient(to bottom, transparent 8%, var(--hl) 8%, var(--hl) 92%, transparent 92%);
+  background-color: transparent; box-decoration-break: clone; -webkit-box-decoration-break: clone;
+  transition: filter .12s;
+}
+mark.hl.red { --hl: rgba(240, 104, 94, .5); }
+mark.hl.amber { --hl: rgba(255, 206, 56, .72); }
+mark.hl:hover { filter: saturate(1.25) brightness(.97); }
+mark.hl.active { --hl: rgba(240, 104, 94, .72); box-shadow: 0 0 0 2px var(--ink); }
+mark.hl.amber.active { --hl: rgba(255, 196, 20, .95); }
+mark.hl sup { font: 700 10px/1 var(--sans); border-radius: 99px; padding: 2px 5px; margin-left: 3px; vertical-align: 7px; color: #fff; }
 mark.hl.red sup { background: var(--red); }
-mark.hl.amber sup { background: var(--amber-line); color: #3d2705; }
+mark.hl.amber sup { background: #a97b10; }
+
+.popover {
+  position: relative; margin-top: 14px; width: 100%;
+  background: #fff; border: 2px solid var(--ink); border-radius: 16px; padding: 16px 16px 14px;
+  box-shadow: 0 18px 40px -18px rgba(38, 39, 44, .45);
+}
+.popover.red { border-color: var(--red); }
+.popover.amber { border-color: var(--amber-line); }
+.popover::before {
+  content: ''; position: absolute; top: -9px; left: var(--caret, 28px); width: 14px; height: 14px;
+  background: #fff; border-left: 2px solid currentColor; border-top: 2px solid currentColor; transform: rotate(45deg);
+}
+.popover.red::before { color: var(--red); }
+.popover.amber::before { color: var(--amber-line); }
+.pop-close { position: absolute; top: 8px; right: 10px; border: 0; background: none; font-size: 16px; color: var(--ink-3); cursor: pointer; padding: 4px 6px; border-radius: 8px; }
+.pop-close:hover { background: var(--bg); color: var(--ink); }
+.pop-head { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding-right: 24px; }
+.pop-head b { font-size: 15px; }
+.pop-quote { font-size: 16px; margin: 8px 0 4px; background: linear-gradient(to bottom, transparent 8%, rgba(255, 206, 56, .5) 8%, rgba(255, 206, 56, .5) 92%, transparent 92%); display: inline; }
+.popover.red .pop-quote { background: linear-gradient(to bottom, transparent 8%, rgba(240, 104, 94, .38) 8%, rgba(240, 104, 94, .38) 92%, transparent 92%); }
+.pop-why { font-size: 13.5px; color: var(--ink-2); margin-top: 8px; }
+.popover .rx-label { margin-top: 12px; }
+.popover .panel { background: var(--bg); }
+.qcard.flash { animation: flash 1.2s ease; }
+@keyframes flash { 0%, 100% { box-shadow: none; } 30% { box-shadow: 0 0 0 4px var(--blue-soft); } }
 
 .chain { display: grid; gap: 12px; }
 .chain-row { border-left: 3px solid var(--blue-soft); padding: 2px 0 2px 14px; }
@@ -324,6 +373,7 @@ table.students .num { font-variant-numeric: tabular-nums; font-weight: 700; }
 
 @media (max-width: 1080px) {
   .report-grid { grid-template-columns: minmax(0, 1fr); }
+  .report-cols { grid-template-columns: minmax(0, 1fr); }
   .workbench { position: static; max-height: none; }
   .span-8, .span-7, .span-6, .span-5, .span-4 { grid-column: span 12; }
   .legend { grid-template-columns: minmax(0, 1fr); }
@@ -340,9 +390,16 @@ table.students .num { font-variant-numeric: tabular-nums; font-weight: 700; }
   .crit { grid-template-columns: 72px minmax(0, 1fr) 36px; }
   .triage strong { font-size: 26px; }
   .site-footer { flex-direction: column; }
+  /* 좁은 화면에서는 안내 풍선을 아래쪽 시트로 */
+  .popover {
+    position: fixed; inset: auto 8px calc(8px + env(safe-area-inset-bottom, 0px)) 8px;
+    width: auto; max-height: 72vh; overflow: auto; z-index: 40;
+  }
+  .popover::before { display: none; }
+  .work-head { flex-direction: column; }
 }
 @media print {
-  .topbar, .workbench, .no-print, .site-footer { display: none !important; }
+  .topbar, .workbench, .no-print, .site-footer, .popover, .work-bar { display: none !important; }
   body { background: #fff; }
   .report-grid { grid-template-columns: 1fr; }
   .card { box-shadow: none; }
