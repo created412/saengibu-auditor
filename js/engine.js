@@ -378,6 +378,7 @@
 
     // ⑦ 학생 소감 어투 · 지식 단순 서술
     for (const s of sentences) {
+      const si = s.index;
       if (overlaps(taken(), s.start, s.end)) continue;
       if (lex.SELF_VOICE.test(s.text)) {
         push('selfvoice', s.start, s.end, { penalty: 20, why: '학생이 쓴 소감·다짐을 옮긴 듯한 문장입니다. 세특은 교사가 직접 관찰·평가한 내용을 교사의 시점으로 씁니다.' });
@@ -386,7 +387,16 @@
       const studentAct = s.clauses.some((c) => c.type === '행동' || c.type === '사고');
       const knowledgeOnly = !studentAct && lex.KNOWLEDGE_PREDICATES.test(s.text) && s.text.length >= 12;
       const learnOnly = lex.LEARN_ONLY.test(s.text) && !s.clauses.some((c) => (c.type === '행동' || c.type === '사고') && !lex.LEARN_ONLY.test(c.text));
-      if (knowledgeOnly || learnOnly) {
+      // ① 성장 서사의 출발점("처음에는 …로 받아들임")은 지식 서술이 아니다
+      const growthSetup = /처음에는|초기에는|당초|원래는|기존에는|이전에는/.test(s.text);
+      // ② 학생에 대한 총평("…문제해결력이 뛰어난 학생임")도 지식 서술이 아니다
+      const aboutStudent = /학생|자신|스스로|본인/.test(s.text) || /(?:학생|모습|자세|태도|사람|사례)임[.!?]?$/.test(s.text);
+      // ③ 앞뒤 문장이 같은 소재를 이어받아 학생의 사고를 보여 주면 그 문장은 전제일 뿐이다
+      const near = [sentences[si - 1], sentences[si + 1]].filter(Boolean);
+      const mine = new Set(s.specific);
+      const linked = near.some((o) => o.clauses.some((c) => c.type === '사고' && c.strength >= 3)
+        && o.specific.some((x) => mine.has(x)));
+      if ((knowledgeOnly || learnOnly) && !growthSetup && !aboutStudent && !linked) {
         push('knowledge', s.start, s.end, { penalty: 15, why: '교과 내용(성취기준에 이미 있는 지식)을 설명할 뿐, 학생이 무엇을 해서 어느 수준에 도달했는지가 없습니다.' });
       }
     }
@@ -423,7 +433,8 @@
     }
     // 분량이 짧으면(발췌·짧은 기록) 성장 흐름은 판단하지 않는다 — 없는 것이 자연스럽다
     const growthNA = bytes < 900;
-    if (!growthNA && countMarkers(text, lex.GROWTH_MARKERS) === 0 && sentences.length >= 3) {
+    const growthSignals = countMarkers(text, lex.GROWTH_MARKERS) + lex.GROWTH_SHAPES.filter((re) => re.test(text)).length;
+    if (!growthNA && growthSignals === 0 && sentences.length >= 3) {
       push('growth', 0, 0, {
         global: true, penalty: 0, scopeStart: 0, scopeEnd: text.length,
         why: '처음 생각 → 탐구 → 변화·심화의 흐름이 보이지 않습니다. 학생이 생각을 바꾼 지점이 있으면 한 문장으로 남기면 좋습니다(분량이 짧으면 없는 것이 자연스럽습니다).',
@@ -437,7 +448,8 @@
     const n = Math.max(1, sentences.length);
     const allSpecific = [...new Set(sentences.flatMap((s) => s.specific))];
     const procCount = countMarkers(text, lex.PROCESS_MARKERS) + countQuotes(text);
-    const growthCount = countMarkers(text, lex.GROWTH_MARKERS);
+    // 성장: 표지어뿐 아니라 '처음 ~했으나 → 다시/새로 ~함' 같은 서사 구조도 센다
+    const growthCount = countMarkers(text, lex.GROWTH_MARKERS) + lex.GROWTH_SHAPES.filter((re) => re.test(text)).length;
     const clauses = sentences.flatMap((s) => s.clauses);
     const actClauses = clauses.filter((c) => c.type === '행동').length;
     const listing = actClauses >= 3 && procCount === 0;
@@ -457,8 +469,13 @@
       if (ctx.maxSim) unique -= Math.max(0, ctx.maxSim - 0.5) * 60;
     }
     scores.unique = clamp(round(unique));
-    scores.process = clamp([34, 62, 80, 91, 96][Math.min(procCount, 4)] - sum('process'));
-    scores.growth = [45, 72, 90][Math.min(growthCount, 2)];
+    // 과정성: '분석·비교' 같은 낱말이 있느냐가 아니라, 구체적 내용이 붙은 사고 절이 몇 개인지로 본다
+    // (낱말만 세면 "비판적으로 독해하는 안목이 돋보임" 같은 빈 문장이 높은 점수를 받는다)
+    const thinkUnits = sentences.filter((s) => s.clauses.some((c) => c.type === '사고')
+      && evidenceStrength(s.text) >= 6).length;
+    scores.process = clamp([34, 58, 76, 88, 95][Math.min(thinkUnits, 4)] - sum('process'));
+    // 성장 서사가 없다고 크게 깎지 않는다 — 성취특성이 또렷하면 전후 변화가 없어도 좋은 기록일 수 있다
+    scores.growth = [62, 82, 92, 96][Math.min(growthCount, 3)];
     let dup = 100 - sum('dup');
     if (ctx && ctx.maxSim) dup -= Math.max(0, ctx.maxSim - 0.5) * 100;
     scores.dup = clamp(round(dup));

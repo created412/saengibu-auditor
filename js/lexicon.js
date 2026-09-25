@@ -164,12 +164,13 @@
   /** 교사 평가어 패턴 — deleteMode: tail(문장 끝 평가절) / phrase(절째) */
   const EVAL_PATTERNS = [
     { re: new RegExp(`${PRAISE}\\s*(?:[가-힣]+\\s*)?${COMPETENCY}[을를이가]?\\s*${SHOW}`, 'g'), cat: 'thinking', deleteMode: 'tail' },
-    { re: new RegExp(`${COMPETENCY}[이가]\\s*(?:매우\\s*|특히\\s*|크게\\s*)?(?:뛰어남|우수함|탁월함|돋보임|향상됨|성장함|높음|깊음|인상적임|훌륭함|정교함|정교하며)`, 'g'), cat: 'thinking', deleteMode: 'tail' },
+    { re: new RegExp(`${COMPETENCY}[이가]\\s*(?:매우\\s*|특히\\s*|크게\\s*)?(?:뛰어남|우수함|탁월함|돋보임|향상됨|성장함|높음|깊음|인상적임|훌륭함|정교함|정교하며|성실함|충실함|남다름|빛남|두드러짐)`, 'g'), cat: 'thinking', deleteMode: 'tail' },
     { re: /(?:[가-힣]+\s*)?(?:재능|가능성|잠재력|자질)[을를이가]?\s*(?:갖춤|지님|보임|엿보임|기대됨|풍부함|무궁무진함)/g, cat: 'thinking', deleteMode: 'tail' },
     { re: /(?:미래|장래)[가-힣\s]{0,12}(?:인재|리더|주역)(?:로서|로|가|임)?/g, cat: 'thinking', deleteMode: 'tail' },
     { re: /(?:매우\s*)?적극적으로\s*참여(?:함|하며|하여|하고|하는\s*모습을\s*보임)/g, cat: 'participation', deleteMode: 'phrase' },
     { re: /(?:매우\s*)?성실(?:하게|히)\s*(?:참여|수행|임)(?:함|하며|하여|하고)/g, cat: 'participation', deleteMode: 'phrase' },
     { re: /(?:큰|많은|깊은|높은)?\s*(?:관심과\s*흥미|관심|흥미|열정)[을를]\s*(?:가지고|보이며|보이고|보임|보여줌|나타냄)/g, cat: 'interest', deleteMode: 'phrase' },
+    { re: new RegExp(`${COMPETENCY}[이가]\\s*${PRAISE}\\s*(?:학생|모습|사례)임`, 'g'), cat: 'thinking', deleteMode: 'tail' },
     { re: /(?:다른\s*학생들?의|친구들의|학급의)\s*모범이\s*됨/g, cat: 'attitude', deleteMode: 'tail' },
     { re: /인상적(?:임|이었음)/g, cat: 'thinking', deleteMode: 'tail' },
   ];
@@ -213,10 +214,25 @@
   ];
 
   /** 성장·변화 표지 — 학생의 생각·수행이 바뀐 흔적만(사회·물질의 '변화'는 제외) */
-  const GROWTH_MARKERS = ['처음에는', '초기에는', '처음 생각', '생각을 수정', '생각을 바꾸', '생각이 바뀌', '해석을 수정', '관점이 바뀌', '점차', '보완', '심화', '확장', '발전시', '후속', '더 나아가', '재검토', '피드백을 반영', '고쳐', '다시 시도', '다시 측정', '다음 시도', '넓혀'];
+  const GROWTH_MARKERS = [
+    '처음에는', '초기에는', '처음 생각', '처음 판단', '당초', '원래는',
+    '생각을 수정', '생각을 바꾸', '생각이 바뀌', '해석을 수정', '판단을 수정', '결론을 수정', '가설을 수정',
+    '관점이 바뀌', '관점을 바꾸', '시각에서 벗어나', '시각을 넓혀', '인식이 바뀌', '생각의 변화',
+    '점차', '보완', '심화', '확장', '발전시', '후속', '더 나아가', '한 걸음 더', '재검토', '재구성', '다시 세움', '다시 정리',
+    '피드백을 반영', '지적을 반영', '고쳐', '다시 시도', '다시 측정', '다시 설계', '다음 시도', '넓혀',
+    '부딪힘', '한계를 느끼', '어려움을 겪', '실패를 통해', '시행착오', '즉석에서 보완', '새롭게 보게', '달리 보게', '깨닫',
+  ];
+
+  /** 성장 서사 구조 — 표지어가 없어도 '처음 ~했으나 → 다시/새로 ~함' 흐름이면 성장으로 읽는다 */
+  const GROWTH_SHAPES = [
+    /(?:처음|초기|당초|원래|기존)[^.]{0,40}(?:으나|지만|였으나|했으나|았으나|더니)/,
+    /(?:으나|지만|더니)[^.]{0,40}(?:다시|새로|새롭게|바꾸|수정|보완|확장|심화|재구성|세움|설계)/,
+    /(?:로만|만으로|로써만)\s*(?:보던|생각하던|여기던|이해하던)[^.]{0,30}(?:벗어나|넘어|달리|바꾸)/,
+    /(?:막힌|벽에|한계에|문제에)\s*(?:부딪|봉착)[^.]{0,40}(?:다시|새로|바꾸|보완|찾)/,
+  ];
 
   /** 증거 단위 분류 동사 */
-  const THINK_VERBS = /(?:분석|비교|대조|해석|판단|추론|비판|질문|제기|반론|반박|근거|주장|도출|파악|탐구|검토|평가하|구분|분류|설명|연결|적용|예측|가설|의문|모순|재구성|종합|정리하여 제시|제시|검증|반례|조정)/;
+  const THINK_VERBS = /(?:분석|비교|대조|해석|판단|추론|비판|질문|제기|반론|반박|근거|주장|도출|파악|탐구|검토|평가하|구분|분류|설명|연결|적용|예측|가설|의문|모순|재구성|종합|정리하여 제시|제시|검증|반례|조정|깨닫|깨달|고민|성찰|인식|재정의|벗어나|견주|짚|따져|따짐|풀어냄|해결|고찰|주목|규명|밝힘|알아냄|살펴)/;
   const ACT_VERBS = /(?:읽|조사|발표|작성|참여|찾|정리|제작|토의|토론|수행|제출|관찰|기록|시청|방문|인터뷰|설계|만들|그려|그림|답사|실험|참관|선정|수집|번역|요약|측정|계산|구함|풀|칠|배치|연주|연습|시도)/;
 
   /** 구체성 판정에서 제외할 일반 명사 */
@@ -334,7 +350,7 @@
 
   SA.lex = {
     CRITERIA, DANGER_RULES, BRAND_TERMS, EDU_ALLOW, BYTE_LIMIT,
-    EVAL_PATTERNS, ABSTRACT_PATTERNS, VAGUE_NOUNS, CLICHES, EXAGGERATIONS, SELF_VOICE, SYMBOL, KNOWLEDGE_PREDICATES, LEARN_ONLY,
+    EVAL_PATTERNS, ABSTRACT_PATTERNS, VAGUE_NOUNS, CLICHES, EXAGGERATIONS, SELF_VOICE, SYMBOL, KNOWLEDGE_PREDICATES, LEARN_ONLY, GROWTH_SHAPES,
     PROCESS_MARKERS, GROWTH_MARKERS, THINK_VERBS, ACT_VERBS, GENERIC_WORDS, CANDIDATES, TEMPLATES, SLOT, OBSERVE_POINTS,
     SKELETON_CATS, SKELETON_LABEL,
   };
