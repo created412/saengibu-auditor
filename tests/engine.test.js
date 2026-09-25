@@ -218,3 +218,33 @@ test('기재 금지는 유지(통과)로 넘길 수 없다', () => {
   const verified = E.audit(t, { verified: new Set(a.danger.map((i) => i.signature)) });
   assert.equal(E.verdict(verified).stamp, '위험');
 });
+
+/* ── 실제 세특에서 나온 오탐 3종 ── */
+
+test('따옴표 안의 물음표는 문장 끝이 아니다 (영어 인용 제목)', () => {
+  const t = '최근 한국 드라마의 웹툰 각색에 관심을 갖고 ‘Original webtoon drama craze, is it okay?’라는 제목의 영어 에세이를 작성함. 다양한 어휘로 생각을 표현함.';
+  assert.equal(ko.splitSentences(t).length, 2);
+  const a = E.audit(t);
+  assert.ok(!a.issues.some((i) => i.type === 'style'), '명사형 종결 오탐');
+  assert.equal(E.applyAnswer(t, { type: 'style', signature: 'x', text: t }, { kind: 'restyle' }).text, t);
+});
+
+test('같은 문장에 결론이 있으면 추상 표현으로 보지 않는다', () => {
+  const ok = '웹툰 각색이 콘텐츠 산업에 미치는 영향을 살펴보고, 각 매체의 고유한 특성을 고려한 적절한 각색이 필요하다는 의견을 제시함.';
+  assert.ok(!E.audit(ok).issues.some((i) => i.type === 'vague'), '결론이 있는 문장을 추상 표현으로 지적함');
+  // 행동만 있고 결론이 없으면 그대로 지적한다
+  const still = '참관기를 읽고 당시 재판 과정에서 나타난 문제점을 분석함.';
+  assert.ok(E.audit(still).issues.some((i) => i.type === 'vague'));
+});
+
+test('분량이 짧으면 성장성은 판단 보류하고 총점에서 뺀다', () => {
+  const excerpt = '농구 영화를 본 뒤 자유투의 포물선에 관심을 갖고 이차함수와 연결하여 탐구함. 자유투를 던지는 장면을 캡처해 공의 이동 경로를 이차함수 그래프에 나타냄. 골대 높이와 거리를 직접 측정하여 이차함수의 식을 구하고 최고점의 높이를 계산함.';
+  const a = E.audit(excerpt);
+  assert.ok(a.bytes < 900);
+  assert.deepEqual(a.na, ['growth']);
+  assert.ok(!a.issues.some((i) => i.type === 'growth'), '짧은 기록에 성장 흐름 지적이 뜨면 안 됨');
+  assert.ok(a.overall >= 90, `발췌본 점수 ${a.overall}`);
+  // 분량이 충분하면 성장성을 그대로 본다
+  const long = E.audit(excerpt.repeat(4));
+  assert.deepEqual(long.na, []);
+});

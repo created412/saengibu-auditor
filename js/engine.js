@@ -308,6 +308,11 @@
         if (overlaps(taken(), start, end)) continue;
         const before = text.slice(Math.max(0, start - 4), start);
         if (/[’”'"」]\s*$|라는\s*$/.test(before)) continue;
+        // 같은 문장의 다른 절에 구체적인 근거·결론이 있으면 추상 표현으로 보지 않는다
+        // ("…영향을 살펴보고, 각 매체의 특성을 고려한 적절한 각색이 필요하다는 의견을 제시함.")
+        // (단순히 '무엇을 읽고' 같은 행동 절이 아니라, 판단·결론이 담긴 사고 절이 있을 때만)
+        const vs = sentenceAt(sentences, start);
+        if (vs && vs.clauses.some((c) => (c.abs + c.text.length <= start || c.abs >= end) && c.type === '사고' && c.strength >= 4)) continue;
         let noun = '';
         let verb = '';
         if (p.kind === 'vagueObject') {
@@ -416,7 +421,9 @@
         why: '수업 활동이 나열되어 있고, 학생이 그 활동에서 무엇을 발견·판단·선택했는지가 없습니다. 점선 밑줄 범위가 나열된 활동입니다.',
       });
     }
-    if (countMarkers(text, lex.GROWTH_MARKERS) === 0 && sentences.length >= 3) {
+    // 분량이 짧으면(발췌·짧은 기록) 성장 흐름은 판단하지 않는다 — 없는 것이 자연스럽다
+    const growthNA = bytes < 900;
+    if (!growthNA && countMarkers(text, lex.GROWTH_MARKERS) === 0 && sentences.length >= 3) {
       push('growth', 0, 0, {
         global: true, penalty: 0, scopeStart: 0, scopeEnd: text.length,
         why: '처음 생각 → 탐구 → 변화·심화의 흐름이 보이지 않습니다. 학생이 생각을 바꾼 지점이 있으면 한 문장으로 남기면 좋습니다(분량이 짧으면 없는 것이 자연스럽습니다).',
@@ -458,14 +465,18 @@
     scores.exag = clamp(100 - sum('exag'));
     if (!text.trim()) Object.keys(scores).forEach((k) => (scores[k] = 0));
 
-    const overall = round(lex.CRITERIA.reduce((acc, c) => acc + c.weight * scores[c.key], 0));
-    const weightOf = (crit) => (lex.CRITERIA.find((c) => c.key === crit) || { weight: 0 }).weight;
+    // 판단을 보류하는 기준은 총점에서 빼고, 남은 기준의 가중치를 비례해서 키운다
+    const na = growthNA && text.trim() ? ['growth'] : [];
+    const scored = lex.CRITERIA.filter((c) => !na.includes(c.key));
+    const wSum = scored.reduce((acc, c) => acc + c.weight, 0) || 1;
+    const overall = round(scored.reduce((acc, c) => acc + (c.weight / wSum) * scores[c.key], 0));
+    const weightOf = (crit) => (lex.CRITERIA.find((c) => c.key === crit) || { weight: 0 }).weight / wSum;
     issues.forEach((i) => { i.gain = i.criterion ? +(weightOf(i.criterion) * i.penalty).toFixed(1) : 0.3; });
 
     const notes = []; // 글 전반 지적은 이제 issues(global)로 다룬다
 
     return {
-      text, sentences, issues, dismissedIssues, scores, overall, notes,
+      text, sentences, issues, dismissedIssues, scores, overall, notes, na,
       danger: issues.filter((i) => i.grade === 'danger'), caution: issues.filter((i) => i.grade === 'caution'),
       swapRisk: clamp(round(100 - scores.unique + (clicheHits.length ? 5 : 0))),
       bytes, chars: text.replace(/\s/g, '').length,
@@ -677,7 +688,10 @@
   function expectedScore(auditResult, issues) {
     const s = { ...auditResult.scores };
     for (const i of issues) if (i.criterion) s[i.criterion] = clamp(s[i.criterion] + i.penalty);
-    return round(lex.CRITERIA.reduce((acc, c) => acc + c.weight * s[c.key], 0));
+    const na = auditResult.na || [];
+    const scored = lex.CRITERIA.filter((c) => !na.includes(c.key));
+    const wSum = scored.reduce((acc, c) => acc + c.weight, 0) || 1;
+    return round(scored.reduce((acc, c) => acc + (c.weight / wSum) * s[c.key], 0));
   }
 
   /* ───────────── 수정 ───────────── */

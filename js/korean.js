@@ -195,8 +195,11 @@
   function splitSentences(text) {
     const out = [];
     const re = /[^.!?\n]+(?:[.!?]+|\n|$)/g;
-    // 소수점(0.5)·버전 번호는 문장 끝이 아니다 — 같은 길이의 문자로 가려 두고 오프셋은 원문 그대로 쓴다
-    const masked = String(text).replace(/(\d)\.(?=\d)/g, '$1․');
+    // 소수점(0.5)과 따옴표 안의 문장부호(‘… is it okay?’)는 문장 끝이 아니다
+    // — 같은 길이의 다른 문자로 가려 두고, 오프셋·본문은 원문 그대로 쓴다
+    let masked = String(text).replace(/(\d)\.(?=\d)/g, '$1․');
+    masked = masked.replace(/‘[^’]*’|“[^”]*”|'[^']*'|"[^"]*"|「[^」]*」|『[^』]*』|〈[^〉]*〉|《[^》]*》/g,
+      (q) => q.replace(/[.!?]/g, '․'));
     let m;
     while ((m = re.exec(masked))) {
       const raw = m[0];

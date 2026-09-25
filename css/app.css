@@ -187,6 +187,8 @@ details.source-box summary { cursor: pointer; font-weight: 700; color: var(--ink
 .bar > i.green { background: var(--blue); }
 .bar > b { position: absolute; top: -3px; bottom: -3px; width: 2px; background: var(--ink); opacity: .35; }
 .crit .val { text-align: right; font-variant-numeric: tabular-nums; font-weight: 700; }
+.crit.na .name, .crit.na .val { color: var(--ink-3); }
+.na-note { font-size: 12px; color: var(--ink-3); }
 .crit .delta { font-size: 11px; color: var(--green); margin-left: 2px; }
 
 .swap { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 16px; align-items: center; border: 2px solid var(--line); border-radius: 14px; padding: 14px 16px; background: #fbfcfe; }

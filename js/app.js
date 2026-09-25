@@ -249,8 +249,12 @@
     return map;
   }
 
-  function criteriaBars(scores, base) {
+  function criteriaBars(scores, base, na = []) {
     return `<div class="crit-list">${lex.CRITERIA.map((c) => {
+      if (na.includes(c.key)) {
+        return `<div class="crit na" title="분량이 짧아 판단을 보류합니다. 총점에서도 제외했습니다."><span class="name">${c.name}</span>
+          <span class="na-note">분량이 짧아 판단 보류 · 총점에서 제외</span><span class="val">—</span></div>`;
+      }
       const v = scores[c.key];
       const b = base ? base[c.key] : null;
       const delta = b != null && v !== b ? `<span class="delta">${v > b ? '+' : ''}${v - b}</span>` : '';
@@ -533,7 +537,7 @@
       <div class="report-cols">
         <div class="card card-pad">
           <div class="row" style="justify-content:space-between;margin-bottom:14px"><h2>7대 감사기준</h2><span class="faint small">막대 위 세로선 = 처음 점수</span></div>
-          ${criteriaBars(a.scores, f && f !== a ? f.scores : null)}
+          ${criteriaBars(a.scores, f && f !== a ? f.scores : null, a.na)}
           <div class="swap" style="margin-top:18px">
             <div class="pct" style="color:var(--${barColor(100 - a.swapRisk)})">${a.swapRisk}%</div>
             <div><b>이름 바꿔도 되는 세특인가?</b><div class="small muted">학생 교체 가능성 — ${a.swapRisk >= 60 ? '이 기록에는 해당 학생에게만 나타나는 구체적인 질문·해석·결론·탐구과정이 부족합니다.' : a.swapRisk >= 35 ? '학생 고유의 장면이 일부 있지만 더 드러낼 여지가 있습니다.' : '이 학생만의 구체적인 장면이 드러나는 기록입니다.'}</div></div>
