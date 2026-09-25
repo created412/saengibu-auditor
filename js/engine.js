@@ -313,6 +313,13 @@
         // (단순히 '무엇을 읽고' 같은 행동 절이 아니라, 판단·결론이 담긴 사고 절이 있을 때만)
         const vs = sentenceAt(sentences, start);
         if (vs && vs.clauses.some((c) => (c.abs + c.text.length <= start || c.abs >= end) && c.type === '사고' && c.strength >= 4)) continue;
+        // 추상 낱말 바로 앞에 그 대상을 한정하는 구체적 수식어가 있으면 빈 표현이 아니다
+        // ("습지가 기후변화 완화와 생물다양성 유지에 미치는 영향을 분석함", "전이적 장소와 경계의 의미를 탐구함")
+        if (p.kind === 'vagueObject') {
+          const cl = vs && vs.clauses.find((c) => start >= c.abs && start < c.abs + c.text.length);
+          const head = cl ? text.slice(cl.abs, start) : text.slice(Math.max(0, start - 60), start);
+          if (/(?:의|는|은|던|인|들)\s*$/.test(head) && specificStems(head).length) continue;
+        }
         let noun = '';
         let verb = '';
         if (p.kind === 'vagueObject') {
