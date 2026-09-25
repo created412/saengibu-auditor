@@ -100,7 +100,7 @@
   }
 
   function draftFor(sig) {
-    if (!S.drafts[sig]) S.drafts[sig] = { checked: [], edits: {}, customOn: false, custom: '', keepEval: true, detail: '', sourceFact: '', replacement: '', repCustomOn: false, target: '', rewrite: '' };
+    if (!S.drafts[sig]) S.drafts[sig] = { checked: [], edits: {}, customOn: false, custom: '', keepEval: true, detail: '', sourceFact: '', replacement: '', repCustomOn: false, target: '', rewrite: '', cTopic: '', cBasis: '', cFinding: '' };
     return S.drafts[sig];
   }
 
@@ -289,7 +289,7 @@
   const ACTION_LABEL = {
     source: '📄 자료에서 근거 찾기', observe: '✍️ 내가 관찰한 내용 추가', delete: '✂️ 문제 표현 삭제',
     keep: '✔ 확인 후 유지', detail: '➕ 맨 뒤에 한 문장 더하기', restyle: '명사형으로 고치기', replace: '🔁 대체어로 바꾸기',
-    rewrite: '✍️ 이 문장 고쳐 쓰기',
+    rewrite: '✍️ 이 문장 고쳐 쓰기', compose: '🧩 세 칸으로 만들기',
   };
 
   function actionLabel(issue, act) {
@@ -324,6 +324,13 @@
       const next = (d.rewrite != null && d.rewrite !== '' ? d.rewrite : target).trim();
       if (!target || !next || hasSlot(next) || next === target) return null;
       return { kind: 'rewriteSentence', target, text: next };
+    }
+    if (action === 'compose') {
+      const targets = q.targets || [];
+      const target = d.target || (targets.length === 1 ? targets[0] : '');
+      const text = E.composeSentence({ topic: d.cTopic, basis: d.cBasis, finding: d.cFinding });
+      if (!target || !d.cFinding.trim() || !text || hasSlot(text)) return null;
+      return { kind: 'rewriteSentence', target, text };
     }
     if (action === 'delete') return { kind: 'delete' };
     if (action === 'restyle') return { kind: 'restyle' };
@@ -397,9 +404,28 @@
           <div class="orig-line">원문: ${esc(picked)}</div>
           ${targets.length > 1 ? `<button class="btn btn-sm btn-ghost" type="button" data-act="pick-target" data-sig="${sig}" data-k="-1">다른 문장 고르기</button>` : ''}
           <textarea id="rw-${sig.length}" rows="3" data-input="draft-rewrite" data-sig="${sig}" placeholder="${esc(picked)}">${esc(d.rewrite != null && d.rewrite !== '' ? d.rewrite : picked)}</textarea>
-          ${sugg.length ? `<div class="tpl-label" style="margin-top:8px">추천 문장 · 문장 틀 <span class="faint">— 누르면 위 칸에 들어갑니다</span></div>
+          ${sugg.length ? `<div class="tpl-label" style="margin-top:8px">이 문장의 조각으로 만든 대체 문장 · 문장 틀 <span class="faint">— 누르면 위 칸에 들어갑니다</span></div>
             <div class="tpl-list">${sugg.map((t, k) => `<button class="tpl ${d.rewrite === t ? 'on' : ''}" type="button" data-act="use-rewrite" data-sig="${sig}" data-k="${k}">${esc(t)}</button>`).join('')}</div>` : ''}
           ${hasSlot(d.rewrite) ? '<div class="small" style="color:var(--amber)">〔 〕 칸을 실제 관찰 내용으로 채우면 적용할 수 있습니다.</div>' : ''}`;
+      }
+    } else if (action === 'compose') {
+      const targets = q.targets || [];
+      const picked = d.target || (targets.length === 1 ? targets[0] : '');
+      if (!picked) {
+        body = `<div class="q">어느 문장을 바꿀까요?</div>
+          <div class="tpl-list">${targets.map((t, k) => `<button class="tpl" type="button" data-act="pick-target" data-sig="${sig}" data-k="${k}">${esc(t)}</button>`).join('')}</div>`;
+      } else {
+        const p = q.parts || {};
+        const preview = E.composeSentence({ topic: d.cTopic, basis: d.cBasis, finding: d.cFinding });
+        body = `<div class="q">세 칸만 채우면 문장은 제가 맞춥니다 <span class="faint small">사실만 적으세요. 어순·어미는 자동입니다</span></div>
+          <div class="orig-line">원문: ${esc(picked)}</div>
+          <label class="field compose-f"><span>① 무엇을 보고 (대상·자료)</span>
+            <input type="text" data-input="c3-topic" data-sig="${sig}" value="${esc(d.cTopic)}" placeholder="${esc(p.topic || '예: 대동법 시행 기록')}"></label>
+          <label class="field compose-f"><span>② 무엇을 근거로</span>
+            <input type="text" data-input="c3-basis" data-sig="${sig}" value="${esc(d.cBasis)}" placeholder="${esc(p.src ? `예: ${p.src}의 해당 대목` : '예: 상인의 기록에 남은 물가 변화')}"></label>
+          <label class="field compose-f"><span>③ 어떤 결론·판단 <span class="faint">(필수)</span></span>
+            <input type="text" data-input="c3-finding" data-sig="${sig}" value="${esc(d.cFinding)}" placeholder="예: 지역에 따라 부담이 다르게 줄었다"></label>
+          ${preview ? `<div class="compose-out"><span class="lbl">만들어진 문장</span>${esc(preview)}</div>` : ''}`;
       }
     } else if (action === 'delete') {
       body = `<div class="q">${issue.type === 'forbidden' ? '기재 금지 표현이 들어 있는 부분을 지우고 문장을 자연스럽게 닫습니다.' : issue.type === 'evidence' ? '근거가 없는 평가 표현을 지우고 문장을 자연스럽게 다시 닫습니다.' : '해당 부분을 지웁니다.'}</div>`;
@@ -856,12 +882,18 @@
 
   function cdraft(id, sig) {
     const k = `${id}|${sig}`;
-    if (!C.drafts[k]) C.drafts[k] = { checked: [], edits: {}, customOn: false, custom: '', none: false, choice: -1, detail: '' };
+    if (!C.drafts[k]) C.drafts[k] = { checked: [], edits: {}, customOn: false, custom: '', none: false, choice: -1, detail: '', rewrite: '', cTopic: '', cBasis: '', cFinding: '' };
     return C.drafts[k];
   }
 
   function classAnswer(q, d) {
     if (d.none && q.none) return q.none.answer;
+    // 문장을 통째로 고쳐 쓴 경우(대체 문장·세 칸 조립)가 다른 답보다 앞선다
+    const composed = (d.cFinding || '').trim() ? E.composeSentence({ topic: d.cTopic, basis: d.cBasis, finding: d.cFinding }) : '';
+    const rewritten = (d.rewrite || '').trim() || composed;
+    if (q.grade !== 'danger' && q.targets && q.targets.length && rewritten && !hasSlot(rewritten)) {
+      return { kind: 'rewriteSentence', target: q.targets[0], text: rewritten };
+    }
     if (q.mode === 'choice') return d.choice >= 0 ? q.choices[d.choice].answer : null;
     if (q.mode === 'text') return d.detail.trim() && !hasSlot(d.detail) ? { kind: 'detail', detail: d.detail } : null;
     if (q.mode !== 'multi') return null;
@@ -870,6 +902,27 @@
     if (d.customOn && d.custom.trim()) facts.push(d.custom.trim());
     if (!facts.length || facts.some(hasSlot)) return null;
     return { kind: 'facts', facts, keepEval: q.canKeepEval };
+  }
+
+  /** 학급 카드: 글자를 치는 동안 다시 그리지 않고 ‘만들어진 문장’과 버튼 상태만 맞춘다 */
+  function syncClassCard(sig) {
+    const id = C.queue[C.pos];
+    if (!id) return;
+    const items = classQuestions(id);
+    const k = items.findIndex((x) => x.issue.signature === sig);
+    const d = cdraft(id, sig);
+    const made = (d.cFinding || '').trim() ? E.composeSentence({ topic: d.cTopic, basis: d.cBasis, finding: d.cFinding }) : '';
+    const card = document.getElementById(`qc-${k}`);
+    if (card) {
+      card.classList.toggle('answered', !!classAnswer(items[k].question, d));
+      let box = card.querySelector('.compose-out');
+      const det = card.querySelector('details.rw');
+      if (!box && made && det) { box = document.createElement('div'); box.className = 'compose-out'; det.appendChild(box); }
+      if (box) box.innerHTML = made ? `<b>만들어진 문장</b><div>${esc(made)}</div>` : '';
+    }
+    const any = items.some((x) => classAnswer(x.question, cdraft(id, x.issue.signature)));
+    const btn = document.querySelector('[data-act="treat-apply"]');
+    if (btn) btn.disabled = !any;
   }
 
   function qcardHtml(id, item, k) {
@@ -898,13 +951,32 @@
           <span class="opt-text">${d.customOn ? `<input type="text" id="ccustom-${k}" data-input="c-custom-text" data-sig="${sig}" value="${esc(d.custom)}" placeholder="${esc(q.customPlaceholder)}">` : '직접 입력'}</span></label>
         <label class="opt none"><input type="checkbox" data-act="c-none" data-sig="${sig}" ${d.none ? 'checked' : ''}><span class="opt-text">${esc(q.none.label)}</span></label>`;
     }
+    // 지적한 문장을 그 자리에서 고쳐 쓰는 길 — 대체 문장 고르기 / 세 칸 조립
+    let rewriteBlock = '';
+    if (issue.grade !== 'danger' && q.targets && q.targets.length && !d.none) {
+      const made = (d.cFinding || '').trim() ? E.composeSentence({ topic: d.cTopic, basis: d.cBasis, finding: d.cFinding }) : '';
+      const p = q.parts || {};
+      rewriteBlock = `<details class="rw" ${d.rewrite || made ? 'open' : ''}>
+        <summary>✎ 이 문장 고쳐 쓰기 — 뒤에 덧붙이지 않고 그 자리를 바꿉니다</summary>
+        <div class="small muted" style="margin:6px 0">원문: “${esc(q.targets[0])}”</div>
+        ${(q.suggestions || []).length ? `<div class="tpl-label">이 문장의 조각으로 만든 대체 문장</div>
+          <div class="tpl-list">${q.suggestions.map((t, j) => `<button class="tpl ${d.rewrite === t ? 'on' : ''}" type="button" data-act="c-sugg" data-sig="${sig}" data-k="${j}">${esc(t)}</button>`).join('')}</div>` : ''}
+        <input type="text" data-input="c-rewrite" data-sig="${sig}" value="${esc(d.rewrite)}" placeholder="고쳐 쓸 문장 (〔 〕 칸은 채워 주세요)">
+        ${hasSlot(d.rewrite) ? '<div class="small" style="color:var(--amber);margin-top:4px">〔 〕 칸을 채우면 적용할 수 있습니다.</div>' : ''}
+        <div class="tpl-label" style="margin-top:8px">또는 세 칸만 채우면 문장으로 만들어 드립니다</div>
+        <div class="compose-f"><span>① 무엇을</span><input type="text" data-input="c3-topic" data-sig="${sig}" value="${esc(d.cTopic)}" placeholder="${esc(p.topic || '예: 대동법 시행 기록')}"></div>
+        <div class="compose-f"><span>② 무엇을 근거로</span><input type="text" data-input="c3-basis" data-sig="${sig}" value="${esc(d.cBasis)}" placeholder="${esc(p.src ? `예: ${p.src}의 어느 대목` : '예: 사료의 세금 항목')}"></div>
+        <div class="compose-f"><span>③ 무엇을 알아냈나</span><input type="text" data-input="c3-finding" data-sig="${sig}" value="${esc(d.cFinding)}" placeholder="예: 부담이 줄지 않았다"></div>
+        ${made ? `<div class="compose-out"><b>만들어진 문장</b><div>${esc(made)}</div></div>` : ''}
+      </details>`;
+    }
     const heading = issue.type === 'forbidden' ? issue.titles.join(' · ') : issue.label;
     const refs = issue.refs || (issue.ref ? [issue.ref] : []);
     return `<div class="qcard ${issue.severity} ${answered ? 'answered' : ''}" id="qc-${k}">
       <div style="margin-bottom:6px"><span class="qno">Q${k + 1}.</span><b>${esc(q.prompt)}</b></div>
       <div class="small muted" style="margin-bottom:6px"><span class="pill ${issue.severity}">${esc(issue.gradeName)}</span> ${esc(heading)}
         ${refs.map((r) => `<span class="ref">기재요령 ${esc(r)}</span>`).join('')} ${issue.global ? '' : `“${esc(issue.mode === 'replace' ? issue.matches.join('’, ‘') : issue.text)}”`}</div>
-      ${body}</div>`;
+      ${body}${rewriteBlock}</div>`;
   }
 
   function renderTreat() {
@@ -1137,6 +1209,12 @@
       }
       case 'rx': {
         const action = el.dataset.action;
+        if (action === 'compose') { // 원문에서 뽑은 대상·자료를 첫 칸에 채워 둔다
+          const issue = currentIssue(sig);
+          const q = E.buildQuestion(issue, S.audit, { sources: S.source });
+          const d = draftFor(sig);
+          if (!d.cTopic) d.cTopic = (q.parts && q.parts.topic) || '';
+        }
         // 같은 처방을 다시 누르면 그 처방만 접는다 (안내 풍선은 열어 둔다)
         if (S.panel && S.panel.sig === sig && S.panel.action === action) S.panel = { sig, action: null };
         else S.panel = { sig, action };
@@ -1307,10 +1385,22 @@
         if (input) { input.focus(); const at = input.value.indexOf('〔'); if (at >= 0) input.setSelectionRange(at, input.value.indexOf('〕', at) + 1); }
         break;
       }
+      case 'c-sugg': {
+        const id = C.queue[C.pos];
+        const item = classQuestions(id).find((x) => x.issue.signature === sig);
+        const d = cdraft(id, sig);
+        const picked = (item.question.suggestions || [])[Number(el.dataset.k)] || '';
+        d.rewrite = d.rewrite === picked ? '' : picked;
+        render();
+        const k = classQuestions(id).findIndex((x) => x.issue.signature === sig);
+        const input = document.querySelector(`#qc-${k} [data-input="c-rewrite"]`);
+        if (input) { input.focus(); const at = input.value.indexOf('〔'); if (at >= 0) input.setSelectionRange(at, input.value.indexOf('〕', at) + 1); }
+        break;
+      }
       case 'c-none': {
         const d = cdraft(C.queue[C.pos], sig);
         d.none = el.checked;
-        if (el.checked) { d.checked = []; d.customOn = false; d.detail = ''; }
+        if (el.checked) { d.checked = []; d.customOn = false; d.detail = ''; d.rewrite = ''; d.cTopic = ''; d.cBasis = ''; d.cFinding = ''; }
         render(); break;
       }
       case 'open-single': {
@@ -1353,19 +1443,27 @@
       updatePreview(sig);
       return;
     }
+    if (kind.startsWith('c3-')) {
+      const inClass = currentView() === 'class';
+      const d = inClass ? cdraft(C.queue[C.pos], sig) : draftFor(sig);
+      if (kind === 'c3-topic') d.cTopic = el.value;
+      if (kind === 'c3-basis') d.cBasis = el.value;
+      if (kind === 'c3-finding') d.cFinding = el.value;
+      const made = E.composeSentence({ topic: d.cTopic, basis: d.cBasis, finding: d.cFinding });
+      if (inClass) { syncClassCard(sig); return; }
+      const box = document.querySelector('.compose-out');
+      if (box) box.innerHTML = `<span class="lbl">만들어진 문장</span>${esc(made)}`;
+      else if (made && S.panel) render();
+      updatePreview(sig);
+      return;
+    }
     if (kind.startsWith('c-')) {
-      const id = C.queue[C.pos];
-      const d = cdraft(id, sig);
+      const d = cdraft(C.queue[C.pos], sig);
       if (kind === 'c-edit') d.edits[Number(el.dataset.k)] = el.value;
       if (kind === 'c-custom-text') d.custom = el.value;
       if (kind === 'c-detail') d.detail = el.value;
-      const items = classQuestions(id);
-      const any = items.some((x) => classAnswer(x.question, cdraft(id, x.issue.signature)));
-      const btn = document.querySelector('[data-act="treat-apply"]');
-      if (btn) btn.disabled = !any;
-      const k = items.findIndex((x) => x.issue.signature === sig);
-      const card = document.getElementById(`qc-${k}`);
-      if (card && k >= 0) card.classList.toggle('answered', !!classAnswer(items[k].question, d));
+      if (kind === 'c-rewrite') d.rewrite = el.value;
+      syncClassCard(sig);
     }
   });
 

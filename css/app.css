@@ -326,6 +326,19 @@ mark.hl.amber sup { background: #a97b10; }
 .opt .opt-text { flex: 1; font-size: 14px; }
 .opt input[type="text"] { padding: 4px 9px; font-size: 14px; }
 .opt.none { color: var(--ink-2); }
+.compose-f { margin-top: 8px; }
+.compose-f > span { font-size: 12.5px; }
+.compose-out { margin-top: 10px; padding: 11px 13px; border-radius: 10px; background: var(--green-bg); border: 2px solid #b6ddc4; font-size: 15px; line-height: 1.8; }
+.compose-out .lbl, .compose-out b { display: block; font: 700 11px/1 var(--sans); color: var(--green); margin-bottom: 5px; letter-spacing: .04em; }
+
+/* 학급 집중치료 카드 안의 ‘이 문장 고쳐 쓰기’ */
+details.rw { margin-top: 10px; border-top: 2px dotted var(--line-2); padding-top: 8px; }
+details.rw > summary { cursor: pointer; font-size: 13px; font-weight: 700; color: var(--blue-deep); list-style: none; }
+details.rw > summary::-webkit-details-marker { display: none; }
+details.rw > summary::before { content: '▸ '; }
+details.rw[open] > summary::before { content: '▾ '; }
+details.rw input[type="text"] { width: 100%; }
+
 .orig-line { font-size: 13px; color: var(--ink-2); background: #fff; border: 2px solid var(--line-2); border-radius: 10px; padding: 7px 10px; margin-bottom: 8px; }
 .panel textarea { min-height: 70px; }
 

@@ -510,6 +510,86 @@
     return { key: 'amber', label: '주의 · 재작성 권장', stamp: '주의', sub: '재작성 권장' };
   }
 
+  /* ───────────── 대체 문장 만들기 ───────────── */
+
+  const SOURCE_WORDS = /사료|자료|보고서|기사|통계|영상|실험|그래프|지도|작품|문헌|기록|데이터|설문|원문|사진|도표|논설|뉴스|교과서|책|소설|시집|판결문|법전/;
+
+  /** 문장에서 다시 쓸 수 있는 조각을 뽑는다 — 없는 사실을 만들지 않기 위해 원문 안에서만 가져온다 */
+  function fragments(sentenceText) {
+    // 평가어(통찰력·역량·태도)와 칭찬어(돋보이는)는 다시 쓸 ‘대상’이 될 수 없다
+    const evalWord = new RegExp(`^(?:${lex.COMPETENCY}|${lex.PRAISE})$|^(?:돋보이|뛰어나|우수|탁월|훌륭)`);
+    const stems = [...new Set(specificStems(sentenceText))]
+      .filter((w) => !evalWord.test(w) && !lex.EXAGGERATIONS.some((e) => w.startsWith(e) || e.startsWith(w)));
+    const quoted = (sentenceText.match(/[‘“'"「『][^’”'"」』]{1,30}[’”'"」』]/g) || []).map((x) => x.slice(1, -1));
+    const src = (sentenceText.match(SOURCE_WORDS) || [])[0] || '';
+    const act = (sentenceText.match(new RegExp(`(?:${lex.ACT_VERBS.source})`)) || [])[0] || '';
+    const think = (sentenceText.match(new RegExp(`(?:${lex.THINK_VERBS.source})`)) || [])[0] || '';
+    // 대상: 따옴표 안의 말이 있으면 그것, 없으면 가장 구체적인 낱말 두 개
+    const topic = quoted[0] || stems.filter((x) => x !== src).sort((a, b) => b.length - a.length)[0] || '';
+    const topic2 = stems.filter((x) => x !== topic && x !== src).sort((a, b) => b.length - a.length)[0] || '';
+    return { stems, quoted, src, act, think, topic, topic2 };
+  }
+
+  /** 교사에게 보여도 되는 문장인가 — 조사로 시작하거나 서술어가 없는 토막은 거른다 */
+  function wellFormed(s) {
+    const t = String(s).replace(/[\s.]+$/, '').trim();
+    if (t.length < 8) return false;
+    if (/^(?:을|를|이|가|은|는|와|과|의|에|에서|으로|로|도|만|부터|까지)(?:\s|$)/.test(t)) return false;
+    const last = t.split(/\s+/).pop();
+    return ko.isNominalEnding(last) || /〕$/.test(t) || /함|음|임/.test(last);
+  }
+
+  /**
+   * (A) 원문 조각을 재조립한 대체 문장 — 원문에 있는 대상·자료·행동을 그대로 쓰고,
+   * 교사만 아는 부분(근거·결론)만 〔 〕로 남긴다.
+   */
+  function rebuildSuggestions(issue, sentenceText) {
+    const f = fragments(sentenceText);
+    const O = (x, pair) => (x ? ko.josa(x, pair) : '');
+    const out = [];
+    const 대상 = f.topic;
+    const 자료 = f.src;
+    if (issue.type === 'evidence' || issue.type === 'cliche') {
+      if (대상) out.push(`${O(대상, '을/를')} 살피며 〔무엇〕을 근거로 〔어떤 판단〕이라고 ${f.think ? `${f.think}함` : '판단함'}`);
+      if (대상 && f.topic2) out.push(`${O(대상, '과/와')} ${O(f.topic2, '을/를')} 견주어 〔찾아낸 차이〕를 설명함`);
+      if (자료) out.push(`${O(자료, '에서')} 〔근거가 된 대목〕을 찾아 〔결론〕을 제시함`);
+      out.push(`〔학생이 한 말·행동〕을 근거로 ${대상 ? `${O(대상, '에')} 대해 ` : ''}〔판단〕함`);
+    } else if (issue.type === 'vague') {
+      if (대상) out.push(`${대상}에 대해 〔구체적으로 찾아낸 것〕을 확인해 〔결론〕이라고 설명함`);
+      if (자료) out.push(`${O(자료, '을/를')} 근거로 〔무엇〕이 〔어떠하다〕고 분석함`);
+      out.push(`〔대상〕의 〔특징·문제〕를 〔기준〕으로 구분해 설명함`);
+    } else if (issue.type === 'knowledge') {
+      if (대상) out.push(`${O(대상, '을/를')} 〔사례·자료〕에 적용해 〔확인한 결과〕를 밝힘`);
+      if (대상) out.push(`${O(대상, '을/를')} 〔학생의 말〕로 풀어 설명하고 〔예시〕를 들어 보임`);
+      out.push(`〔문제·과제〕를 〔방법〕으로 풀어 〔결과〕를 얻음`);
+    } else if (issue.type === 'selfvoice') {
+      out.push(`${대상 ? `${O(대상, '에서')} ` : ''}〔학생이 한 말·행동〕을 보임`);
+      out.push(`〔장면〕에서 〔학생의 판단〕이라고 설명함`);
+    } else if (issue.type === 'listing' || issue.type === 'growth') {
+      if (대상) out.push(`${O(대상, '에서')} 〔발견한 것〕을 찾아 〔판단·결론〕을 제시함`);
+      if (issue.type === 'growth') out.push(`처음에는 〔처음 생각〕이었으나 ${자료 ? `${O(자료, '을/를')} ` : '〔근거〕를 '}확인한 뒤 〔바뀐 판단〕으로 수정함`);
+    }
+    return [...new Set(out.filter(Boolean))].slice(0, 3);
+  }
+
+  /** (C) 세 칸 조립 — 교사가 사실만 적으면 어순·어미는 프로그램이 맞춘다 */
+  function composeSentence({ topic = '', basis = '', finding = '' } = {}) {
+    const t = String(topic).trim();
+    const b = String(basis).trim();
+    const c = String(finding).trim();
+    if (!t && !b && !c) return '';
+    const tail = (x) => {
+      if (!x) return '';
+      if (/[다]$/.test(x)) return `${x}고 판단함`;
+      if (/(?:함|음|임)$/.test(x)) return `${x.replace(/[.]$/, '')}을 확인함`;
+      return `${ko.josa(x, '으로/로')} 판단함`;
+    };
+    const head = t ? `${ko.josa(t, '을/를')} 살피며` : '';
+    const mid = b ? `${ko.josa(b, '을/를')} 근거로` : '';
+    const end = c ? tail(c) : '확인함';
+    return ko.asRecordSentence([head, mid, end].filter(Boolean).join(' '));
+  }
+
   /* ───────────── 처방: 교사에게 물어볼 질문 ───────────── */
 
   /** 이슈 → 질문. 어떤 지적이든 ‘이 문장 고쳐 쓰기’로 그 자리에서 손볼 수 있다 */
@@ -518,6 +598,11 @@
     if (q.mode !== 'info' && q.targets && q.targets.length && !q.actions.includes('rewrite')) {
       const at = Math.max(0, q.actions.findIndex((a) => a === 'delete' || a === 'keep'));
       q.actions = [...q.actions.slice(0, at), 'rewrite', ...q.actions.slice(at)];
+    }
+    // (C) 세 칸으로 직접 만들기 — 고쳐 쓰기 바로 뒤에
+    if (q.mode !== 'info' && q.targets && q.targets.length && !q.actions.includes('compose')) {
+      const at = q.actions.indexOf('rewrite');
+      q.actions = at >= 0 ? [...q.actions.slice(0, at + 1), 'compose', ...q.actions.slice(at + 1)] : [...q.actions, 'compose'];
     }
     // 형광펜을 누르면 바로 열릴 처방 — 고르기 형식은 권장 선택지, 나머지는 유형별 기본
     const byType = {
@@ -538,7 +623,16 @@
       ? auditResult.sentences.filter((s) => s.end > (issue.scopeStart || 0) && s.start < (issue.scopeEnd == null ? auditResult.text.length : issue.scopeEnd)).map((s) => s.text)
       : (sent ? [sent.text] : []);
     // 추천 문장 — 형광펜 구절을 지운 문장부터 보여 주고, 그 뒤에 문장 틀
-    const suggestions = [];
+    // (A) 원문 조각을 재조립한 대체 문장 — 대상 문장이 있을 때만
+    const base = issue.global ? '' : (sent ? sent.text : '');
+    const suggestions = base || targets.length ? rebuildSuggestions(issue, base || targets.join(' ')) : [];
+    const parts = fragments(base || targets.join(' '));
+    // 그 문장에 구체어가 없으면 기록 전체에서 대상을 찾아 채워 준다
+    if (!parts.topic || !parts.src) {
+      const whole = fragments(auditResult.text);
+      parts.topic = parts.topic || whole.topic;
+      parts.src = parts.src || whole.src;
+    }
     if (sent && !issue.global) {
       const tries = [];
       if (issue.mode === 'replace') (issue.replacements || [issue.replacement]).slice(0, 2).forEach((r) => tries.push({ kind: 'replace', replacement: r }));
@@ -548,14 +642,14 @@
         try {
           // 문장 하나만 넘겨 그 문장의 수정안을 얻는다
           const out = applyAnswer(sent.text, issue, ans).text.trim();
-          if (out && out !== sent.text && !suggestions.includes(out)) suggestions.push(out);
+          if (out && out !== sent.text && !suggestions.includes(out) && wellFormed(out)) suggestions.push(out);
         } catch (e) { /* 추천 실패는 무시 */ }
       }
     }
     const candidates = lex.CANDIDATES[issue.cat] || lex.CANDIDATES.thinking;
     // 빈칸만 주지 않고 고를 수 있는 문장 틀을 함께 준다
     const templates = lex.TEMPLATES[issue.type === 'vague' ? issue.kind : issue.type] || lex.TEMPLATES.listing;
-    const q = { issueId: issue.id, type: issue.type, grade: issue.grade, sourceHits, templates, targets, suggestions };
+    const q = { issueId: issue.id, type: issue.type, grade: issue.grade, sourceHits, templates, targets, suggestions, parts };
     const noneDelete = { label: '관찰한 내용 없음 → 이 문장 삭제', answer: { kind: 'delete' } };
 
     switch (issue.type) {
@@ -755,6 +849,8 @@
       if (!predicate) return '';
       return ko.closeClause(trimmed);
     }
+    // 앞머리가 통째로 지워져 조사로 시작하는 토막("을 보임.")만 남으면 문장째 지운다
+    if (!prefix.trim() && /^(?:을|를|이|가|은|는|와|과|의|에|에서|으로|로|도|만|부터|까지)(?:\s|$)/.test(suffixBody)) return '';
     // 가운데에 있는 절: 해당 구간만 제거
     if (mode === 'word') return (prefix + suffix.replace(/^\s+/, '')).replace(/\s{2,}/g, ' ').trim();
     const cleanedPrefix = prefix.replace(/\s+$/, '');
@@ -1157,6 +1253,7 @@
 
   SA.engine = {
     ISSUE_META, GRADE, audit, verdict, buildQuestion, topQuestions, expectedScore, applyAnswer, applyAnswers, guard,
+    rebuildSuggestions, composeSentence, fragments,
     classAudit, findEvidence, changedSentences, diffWords, splitClauses, skeletonOf,
     specificStems, evidenceStrength,
   };

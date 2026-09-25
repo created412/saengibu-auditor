@@ -248,3 +248,29 @@ test('분량이 짧으면 성장성은 판단 보류하고 총점에서 뺀다',
   const long = E.audit(excerpt.repeat(4));
   assert.deepEqual(long.na, []);
 });
+
+test('대체 문장은 원문 조각으로 만들되 토막 문장은 내놓지 않는다', () => {
+  const t = '모둠 활동에서 춘향전의 이몽룡 행적을 다룬 사료를 조사하고 발표함. 뛰어난 탐구역량을 보임.';
+  const a = E.audit(t);
+  const q = E.buildQuestion(a.issues.find((i) => i.type === 'cliche' || i.type === 'evidence'), a);
+  assert.ok(q.suggestions.length, '대체 문장이 없음');
+  q.suggestions.forEach((s) => {
+    assert.ok(!/^(?:을|를|이|가|은|는|와|과)\s/.test(s), `조사로 시작하는 토막: ${s}`);
+    assert.ok(s.replace(/[\s.]+$/, '').length >= 8, `너무 짧은 문장: ${s}`);
+  });
+  // 평가어(탐구역량)는 다시 쓸 대상이 될 수 없고, 기록에 있는 실제 대상을 집어 준다
+  assert.equal(q.parts.topic, '춘향전');
+});
+
+test('세 칸 조립은 교사가 적은 사실만으로 문장을 맞춘다', () => {
+  const made = E.composeSentence({ topic: '춘향전의 이몽룡 행적', basis: '암행어사 출도 장면의 법 절차', finding: '당시 재판 절차와 다르다' });
+  assert.equal(made, '춘향전의 이몽룡 행적을 살피며 암행어사 출도 장면의 법 절차를 근거로 당시 재판 절차와 다르다고 판단함.');
+  // 칸이 비어도 있는 것만으로 문장을 만든다
+  assert.ok(/함\.$/.test(E.composeSentence({ basis: '두 사료의 서술 차이', finding: '추측이 정설처럼 굳었음' })));
+  assert.equal(E.composeSentence({}), '');
+  // 교사가 적은 말 외에 새로운 사실이 끼어들지 않는다 (붙는 말은 어순·어미뿐)
+  const out = E.composeSentence({ topic: '대동법', finding: '공납 부담이 줄었음' });
+  out.replace(/[.]/g, '').split(/\s+/).forEach((w) => {
+    assert.ok(/대동법|공납|부담|줄|살피며|확인함|판단함|근거로/.test(w), `임의로 덧붙은 말: ${w}`);
+  });
+});
