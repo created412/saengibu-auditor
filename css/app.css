@@ -483,34 +483,45 @@ table.students .num { font-variant-numeric: tabular-nums; font-weight: 700; }
 .log-line b.ok { color: var(--green); }
 .log-done { margin-top: 10px; font-size: 12px; color: var(--ink-3); }
 
-/* 스캔선 — 기록 위를 한 번 훑고 지나간다 */
-.scanline { position: absolute; left: 12px; right: 12px; top: 24px; height: 0; pointer-events: none; z-index: 3;
-  animation: scanmove .95s cubic-bezier(.45, .05, .4, 1) forwards; }
-.scanline::before { content: ''; position: absolute; left: 0; right: 0; top: 0; height: 2px; border-radius: 2px;
-  background: linear-gradient(90deg, transparent, var(--blue-deep), transparent);
-  box-shadow: 0 0 16px 4px rgba(37, 99, 235, .28); }
-.scanline > span { position: absolute; right: 0; top: -13px; font: 700 10.5px/1 var(--sans); letter-spacing: .06em;
-  color: #fff; background: var(--ink); padding: 5px 8px; border-radius: 999px; }
-.scanline.done { opacity: 0; transition: opacity .25s; }
-@keyframes scanmove { from { transform: translateY(0); } to { transform: translateY(var(--scan-h, 200px)); } }
+/* 1단계 — 기록을 읽어 내려가는 장면 */
+.reading-head { display: none; }
+.report.reading .reading-head { display: block; margin-bottom: 14px; }
+.rh-top { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+.rh-line { font-size: 14px; font-weight: 700; color: var(--ink-2); }
+.rh-line b { font-family: var(--display); font-weight: 400; font-size: 18px; color: var(--blue-deep); }
+.rh-bar { height: 6px; border-radius: 999px; background: var(--bg-2); overflow: hidden; margin-top: 10px; }
+.rh-bar > i { display: block; height: 100%; width: 0; border-radius: 999px; background: var(--blue); transition: width .2s linear; }
 
-/* 검사 중에는 아직 아무것도 칠해지지 않은 상태 */
-.report.scanning .doc, .report.scanning .work-bar, .report.scanning .cue-row, .report.scanning .case-nav { pointer-events: none; }
-.report.scanning mark.hl { background-size: 0 100%; }
-.report.scanning mark.hl.painted { background-size: 100% 100%; }
-.report.scanning mark.hl sup { opacity: 0; transition: opacity .2s .05s; }
-.report.scanning mark.hl.painted sup { opacity: 1; }
-.report.scanning .log-line { opacity: 0; transform: translateY(-3px); }
-.report.scanning .log-line.on { opacity: 1; transform: none; }
-.log-line { transition: opacity .18s, transform .18s; }
-.report.scanning .bar > i { width: 0 !important; }
+.report.reading .hero, .report.reading .report-cols, .report.reading .work-bar,
+.report.reading .ledger, .report.reading .diff-box, .report.reading .global-cues,
+.report.reading .work-hint, .report.reading .byte-counter { display: none !important; }
+.report.reading .doc { font-size: 18.5px; }
+.report.reading .doc .sg, .report.reading .doc mark.hl { color: var(--ink-3); transition: color .18s; }
+.report.reading .doc .read { color: var(--ink); }
+.report.reading .doc .reading { color: var(--ink); background-color: var(--blue-soft); border-radius: 3px; }
+
+/* 아직 형광펜이 그어지기 전 */
+.report.reading mark.hl, .report.revealing mark.hl { background-size: 0 100%; }
+.report.reading mark.hl.painted, .report.revealing mark.hl.painted { background-size: 100% 100%; }
+.report.reading mark.hl sup, .report.revealing mark.hl sup { opacity: 0; font-size: 0; padding: 0; margin: 0; transition: opacity .2s .05s; }
+.report.reading mark.hl.painted sup, .report.revealing mark.hl.painted sup { opacity: 1; font: 700 10px/1 var(--sans); padding: 2px 5px; margin-left: 3px; }
+.report.reading .doc, .report.revealing .doc { pointer-events: none; }
+
+/* 2단계 — 결과 공개 */
+.report.revealing .hero { animation: hero-in .42s cubic-bezier(.2, .9, .3, 1); }
+@keyframes hero-in { from { opacity: 0; transform: translateY(-10px); } to { opacity: 1; transform: none; } }
+.report.revealing .log-line { opacity: 0; transform: translateY(-3px); }
+.report.revealing .log-line.on { opacity: 1; transform: none; }
+.log-line { transition: opacity .2s, transform .2s; }
+.report.revealing .bar > i { width: 0 !important; }
 .bar > i { transition: width .75s cubic-bezier(.2, .8, .2, 1); }
-.report.scanning .stamp-box { opacity: 0; }
+.report.revealing .gauge .fill { stroke-dashoffset: var(--c) !important; }
+.report.revealing .stamp-box { opacity: 0; }
+.report.revealing .stamp-box.pop { opacity: 1; }
 .stamp-box { transition: opacity .12s; }
 
 @media (prefers-reduced-motion: reduce) {
-  .scanline { display: none; }
-  .log-line, .bar > i, mark.hl { transition: none; }
+  .log-line, .bar > i, mark.hl, .gauge .fill { transition: none; }
 }
 
 /* 학급 분류 — 학생 한 명이 칩 하나 */
@@ -567,7 +578,6 @@ table.students .num { font-variant-numeric: tabular-nums; font-weight: 700; }
 .gauge-num { font: 400 calc(var(--g) * .34)/1 var(--display); font-variant-numeric: tabular-nums; display: flex; align-items: baseline; gap: 2px; }
 .gauge-num small { font: 700 calc(var(--g) * .095) var(--sans); color: var(--ink-3); }
 .gauge-cap { position: absolute; bottom: 16px; font-size: 11px; font-weight: 700; color: var(--ink-3); letter-spacing: .02em; }
-.report.scanning .gauge .fill { stroke-dashoffset: var(--c) !important; }
 
 /* 작업대 도구 묶음 */
 .tool-group { display: inline-flex; gap: 2px; background: var(--bg); border-radius: 999px; padding: 3px; }
@@ -614,3 +624,14 @@ table.students .num { font-variant-numeric: tabular-nums; font-weight: 700; }
   .hero-bar .btn, .hero-bar .case-nav .btn { flex: 1 1 auto; }
   .log-line .k { font-size: 11.5px; }
 }
+
+/* 읽는 중에는 작업대가 주인공 */
+.report.reading .work-card { border-color: var(--blue); }
+.report.reading .doc { background: #fffdf7; }
+
+/* 읽는 중에는 결과를 미리 보여 주지 않는다 */
+.report.reading .legend-inline,
+.report.reading .work-head .pill-badge,
+.report.reading .work-card > p.faint,
+.report.reading .empty-ok { display: none !important; }
+.report.reading .work-head { margin-bottom: 0; }

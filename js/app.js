@@ -213,6 +213,13 @@
     spans.sort((a, b) => a.s - b.s);
     const cuts = new Set([0, text.length]);
     [...spans, ...scopes].forEach((r) => { cuts.add(r.s); cuts.add(r.e); });
+    // 문장 경계도 자른다 — 읽어 내려가는 연출이 문장 단위로 움직일 수 있게
+    const sents = opts.sentences || [];
+    sents.forEach((s) => { cuts.add(s.start); cuts.add(s.end); });
+    const sentOf = (pos) => {
+      const k = sents.findIndex((x) => pos >= x.start && pos < x.end);
+      return k < 0 ? '' : ` data-si="${k}"`;
+    };
     const points = [...cuts].filter((p) => p >= 0 && p <= text.length).sort((a, b) => a - b);
     const label = (i) => (opts.labels ? opts.labels[i.signature] : '');
     let html = '';
@@ -222,10 +229,11 @@
       if (e <= s) continue;
       const span = spans.find((r) => s >= r.s && e <= r.e);
       const scope = scopes.find((r) => s >= r.s && e <= r.e);
-      let out = esc(text.slice(s, e));
+      const si = sentOf(s);
+      let out = si ? `<span class="sg"${si}>${esc(text.slice(s, e))}</span>` : esc(text.slice(s, e));
       if (span) {
         const i = span.issue;
-        out = `<mark class="hl ${i.severity} ${opts.active === i.signature ? 'active' : ''}" role="button" tabindex="0" data-act="focus-issue" data-sig="${esc(i.signature)}" title="${esc(i.gradeName)} · ${esc(i.label)} — 클릭하면 안내와 처방이 열립니다">${out}${e === span.e ? `<sup>${esc(label(i))}</sup>` : ''}</mark>`;
+        out = `<mark class="hl ${i.severity} ${opts.active === i.signature ? 'active' : ''}"${si} role="button" tabindex="0" data-act="focus-issue" data-sig="${esc(i.signature)}" title="${esc(i.gradeName)} · ${esc(i.label)} — 클릭하면 안내와 처방이 열립니다">${esc(text.slice(s, e))}${e === span.e ? `<sup>${esc(label(i))}</sup>` : ''}</mark>`;
       }
       if (scope) {
         const i = scope.issue;
@@ -542,6 +550,15 @@
           <span class="legend-inline"><span class="hl-chip red"></span>위험 ${a.danger.length}<span class="hl-chip amber"></span>주의 ${a.caution.length}</span>
         </div>
 
+        <div class="reading-head">
+          <div class="rh-top"><span class="pill-badge">감사 진행 중</span>
+            <span class="rh-line">기록을 읽고 있습니다 — <b class="rh-i">0</b> / ${a.sentences.length}문장</span>
+            <div class="spacer"></div>
+            <span class="gcount red rh-red zero"><b>위험 0</b> 기재 금지</span>
+            <span class="gcount amber rh-amber zero"><b>주의 0</b> 수정 권장</span>
+          </div>
+          <div class="rh-bar"><i></i></div>
+        </div>
         ${S.editing ? `<textarea id="editText" rows="7">${esc(S.text)}</textarea>
           <p class="faint small" style="margin:6px 0 0">교과 내용 속 낱말을 잘못 잡았거나 분량을 줄여야 할 때 직접 고치세요. 저장하면 다시 감사합니다.</p>
           <div class="row" style="justify-content:flex-end;margin-top:8px">
@@ -549,7 +566,7 @@
             <button class="btn btn-sm btn-primary" type="button" data-act="edit-save">저장 후 다시 감사</button></div>`
         : `${globalChips(all, nums, S.panel && S.panel.sig)}
           <div class="doc-wrap">
-            <div class="doc">${highlightDoc(a.text, all, { active: S.panel && S.panel.sig, labels: nums }) || '<span class="faint">(빈 기록)</span>'}</div>
+            <div class="doc">${highlightDoc(a.text, all, { active: S.panel && S.panel.sig, labels: nums, sentences: a.sentences }) || '<span class="faint">(빈 기록)</span>'}</div>
             ${active ? popoverHtml(active) : ''}
           </div>
           ${all.length ? '' : `<div class="empty-ok"><div class="big">감사 통과 ✓</div><div class="muted small">위험·주의 사항이 모두 해결되었습니다. 나이스 입력 전에 한 번 더 읽어 주세요.</div></div>`}`}
@@ -754,7 +771,6 @@
       { label: '구체성 · 과장 · 상투 표현', ...mark(n(['vague', 'exag', 'cliche'])) },
       { label: '지식 서술 · 소감 어투 · 나열', ...mark(n(['knowledge', 'selfvoice', 'listing', 'growth'])) },
       { label: '명사형 종결 · 기호 표기', ...mark(n(['style', 'symbol'])) },
-      { label: '이름 바꿔도 되는 세특인가', value: `<b class="${a.swapRisk >= 60 ? 'bad' : 'ok'}">교체 가능성 ${a.swapRisk}%</b>`, tone: a.swapRisk >= 60 ? 'warn' : 'pass' },
     ];
   }
 

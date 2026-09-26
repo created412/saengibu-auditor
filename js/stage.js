@@ -51,63 +51,96 @@
     return () => { cancelAnimationFrame(raf); el.textContent = String(to); };
   }
 
-  /* ───────────── ① 개별 감사: 스캔선 · 형광펜 · 점수 · 도장 ───────────── */
+  /* ───────────── ① 개별 감사: 읽기 → 형광펜 → 결과 공개 ───────────── */
 
+  /**
+   * 1단계 기록을 문장 단위로 읽어 내려가고, 문장을 다 읽은 자리에 형광펜을 긋는다.
+   * 2단계 다 읽고 나서야 점수·판정·검사 항목을 공개한다.
+   */
   function scanSingle(report, audit) {
     if (!report) return;
     const marks = [...report.querySelectorAll('mark.hl')];
     const logs = [...report.querySelectorAll('.audit-log .log-line')];
     const scoreEl = report.querySelector('.sv'); // 게이지 한가운데 숫자
     const stampBox = report.querySelector('.stamp-box');
-    const wrap = report.querySelector('.doc-wrap');
     const doc = report.querySelector('.doc');
+    const sents = (audit.sentences || []).map((_, k) => [...report.querySelectorAll(`[data-si="${k}"]`)]);
 
     const final = () => {
-      report.classList.remove('scanning');
-      const line = report.querySelector('.scanline');
-      if (line) line.remove();
+      report.classList.remove('reading', 'revealing');
       marks.forEach((m) => m.classList.add('painted'));
       logs.forEach((l) => l.classList.add('on'));
+      report.querySelectorAll('[data-si]').forEach((el) => el.classList.remove('reading', 'read'));
       if (scoreEl) scoreEl.textContent = String(audit.overall);
       if (stampBox) stampBox.classList.add('pop');
     };
-    if (reduced() || !wrap || !doc) { final(); return; }
+    if (reduced() || !doc || !sents.length) { final(); return; }
 
-    report.classList.add('scanning');
-    if (scoreEl) scoreEl.textContent = '100';
+    report.classList.add('reading');
+    if (scoreEl) scoreEl.textContent = '0';
 
-    const line = document.createElement('div');
-    line.className = 'scanline';
-    line.innerHTML = '<span>검사 중</span>';
-    const h = doc.offsetHeight;
-    line.style.setProperty('--scan-h', `${h}px`);
-    wrap.appendChild(line);
+    const bar = report.querySelector('.rh-bar > i');
+    const idx = report.querySelector('.rh-i');
+    const redEl = report.querySelector('.rh-red b');
+    const amberEl = report.querySelector('.rh-amber b');
+    const setCount = (el, name, n) => {
+      if (!el) return;
+      el.textContent = `${name} ${n}`;
+      el.parentElement.classList.toggle('zero', !n);
+    };
 
-    const SCAN = 950;
-    const steps = [];
-    // 형광펜은 스캔선이 지나간 자리에서 칠해진다
-    const top = doc.getBoundingClientRect().top;
-    marks.forEach((m) => {
-      const y = m.getBoundingClientRect().top - top;
-      const at = 80 + Math.max(0, Math.min(1, y / Math.max(1, h))) * SCAN;
-      steps.push({ at, run: () => m.classList.add('painted') });
+    // 문장마다 읽는 시간을 글자 수에 맞추되, 전체가 길어지면 함께 줄인다
+    const raw = sents.map((_, k) => {
+      const t = audit.sentences[k].text.length;
+      return Math.max(200, Math.min(560, 26 + t * 13));
     });
-    // 검사 항목 로그가 한 줄씩 쌓인다
-    logs.forEach((l, i) => steps.push({ at: 120 + i * 105, run: () => l.classList.add('on') }));
+    const total = raw.reduce((a, b) => a + b, 0);
+    const scale = total > 2400 ? 2400 / total : 1;
+    const dur = raw.map((x) => x * scale);
 
+    const steps = [];
+    let at = 60;
+    let red = 0;
+    let amber = 0;
+    sents.forEach((els, k) => {
+      const startAt = at;
+      steps.push({
+        at: startAt,
+        run: () => {
+          els.forEach((el) => el.classList.add('reading'));
+          if (idx) idx.textContent = String(k + 1);
+          if (bar) bar.style.width = `${Math.round(((k + 1) / sents.length) * 100)}%`;
+        },
+      });
+      at += dur[k];
+      steps.push({
+        at, // 문장을 다 읽은 순간 그 문장의 형광펜이 그어진다
+        run: () => {
+          els.forEach((el) => { el.classList.remove('reading'); el.classList.add('read'); });
+          els.filter((el) => el.tagName === 'MARK').forEach((m) => {
+            m.classList.add('painted');
+            if (m.classList.contains('red')) setCount(redEl, '위험', ++red); else setCount(amberEl, '주의', ++amber);
+          });
+        },
+      });
+    });
+
+    // 2단계: 결과 공개
+    const revealAt = at + 260;
     let stopCount = () => {};
     steps.push({
-      at: SCAN + 120,
+      at: revealAt,
       run: () => {
-        const l = report.querySelector('.scanline');
-        if (l) l.classList.add('done');
-        report.classList.remove('scanning');   // 기준 막대가 0에서 차오른다
-        stopCount = countTo(scoreEl, 100, audit.overall, 620);
+        report.classList.remove('reading');
+        report.classList.add('revealing');
+        report.querySelectorAll('[data-si]').forEach((el) => el.classList.remove('read'));
+        stopCount = countTo(scoreEl, 0, audit.overall, 700);
+        logs.forEach((l, i) => setTimeout(() => l.classList.add('on'), 120 + i * 70));
       },
     });
-    steps.push({ at: SCAN + 700, run: () => { if (stampBox) stampBox.classList.add('pop'); } });
+    steps.push({ at: revealAt + 520, run: () => { if (stampBox) stampBox.classList.add('pop'); } });
 
-    play(steps, () => { stopCount(); final(); }, SCAN + 1050);
+    play(steps, () => { stopCount(); final(); }, revealAt + 1150);
   }
 
   /* ───────────── ② 학급 감사: 30명이 세 칸으로 갈라지는 장면 ───────────── */
