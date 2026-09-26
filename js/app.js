@@ -501,34 +501,45 @@
     const active = S.panel && currentIssue(S.panel.sig);
     const next = a.issues.find((i) => !active || i.signature !== active.signature) || a.issues[0];
 
+    const headline = a.danger.length
+      ? { line: `기재 금지 ${a.danger.length}건 — 지금은 나이스에 입력할 수 없습니다`, sub: '아래 기록의 <b>빨간 형광펜</b>을 눌러 먼저 고쳐 주세요. 품질 점수와는 별개로 판정합니다.' }
+      : a.caution.length
+        ? { line: `고칠 곳 ${a.caution.length}군데 — 조금만 손보면 좋은 기록이 됩니다`, sub: '<b>노란 형광펜</b>을 누르면 왜 문제인지와 처방이 그 자리에서 열립니다.' }
+        : { line: '기재 금지 없음 · 7대 기준을 모두 통과했습니다', sub: '나이스 입력 전에 한 번 더 읽어 주세요. 결과는 교사 검수용 초안입니다.' };
+
     return `
     <div class="report">
-      <div class="card card-pad report-head-card">
-        <div class="report-head">
-          <div><span class="pill-badge">생기부 감사 결과</span><div class="score-big"><span class="sv">${a.overall}</span><small> / 100</small></div><div class="small muted">품질 점수${f && f.overall !== a.overall ? ` · 처음 ${f.overall}점` : ''}</div></div>
-          <div class="head-mid stack" style="margin:0">
-            <div class="row" style="gap:8px">
-              <span class="gcount red ${a.danger.length ? '' : 'zero'}"><b>위험 ${a.danger.length}</b> 기재 금지 · 바로 수정</span>
+      <div class="card hero ${v.key}">
+        <div class="hero-main">
+          ${gaugeHtml(a.overall, f && f.overall !== a.overall ? f.overall : null)}
+          <div class="hero-text">
+            <span class="pill-badge">생기부 감사 결과</span>
+            <h1 class="hero-line">${headline.line}</h1>
+            <p class="hero-sub">${headline.sub}</p>
+            <div class="hero-meta">
+              <span class="gcount red ${a.danger.length ? '' : 'zero'}"><b>위험 ${a.danger.length}</b> 기재 금지</span>
               <span class="gcount amber ${a.caution.length ? '' : 'zero'}"><b>주의 ${a.caution.length}</b> 수정 권장</span>
               ${a.hasSource ? '<span class="pill blue">원자료 대조 ✓</span>' : ''}
+              <span class="faint small">${a.bytes.toLocaleString()} byte · 한글 약 ${hangulChars(a.bytes)}자 / 1,500</span>
             </div>
-            <div class="muted small">${a.bytes.toLocaleString()} byte(한글 약 ${hangulChars(a.bytes)}자) / 1,500 byte</div>
-            <div class="row no-print"><button class="btn btn-sm" type="button" data-act="single-new">이 세특 다시 입력</button><button class="btn btn-sm" type="button" data-act="print">인쇄</button></div>
-            ${caseNav({ big: true })}
-            <div class="faint small">다른 학생 세특을 이어서 보시려면 위 파란 버튼을 누르세요. 입력 화면으로 가고, 지금 세특은 그대로 남습니다.</div>
           </div>
           <div class="stamp-box ${pop ? 'pop' : ''}">${verdictTag(v, true)}</div>
         </div>
-        ${a.danger.length ? `<div class="alert red">기재 금지 사항 ${a.danger.length}건이 남아 있어 <b>나이스에 입력할 수 없습니다.</b> 아래 기록에서 <b>빨간 형광펜</b>을 눌러 먼저 고쳐 주세요. 품질 점수와는 별개로 판정합니다.</div>` : ''}
         ${auditLogHtml(a)}
+        <div class="hero-bar no-print">
+          ${caseNav({ big: true })}
+          <div class="spacer"></div>
+          <button class="btn btn-sm" type="button" data-act="card-open">🖼 보고서 이미지</button>
+          <button class="btn btn-sm" type="button" data-act="single-new">이 세특 다시 입력</button>
+          <button class="btn btn-sm btn-ghost" type="button" data-act="print">인쇄</button>
+        </div>
       </div>
 
       <div class="card card-pad work-card">
         <div class="work-head">
           <div><span class="pill-badge">감사 대상 기록 · 수정 작업대</span>
-            <p class="work-hint">형광펜을 클릭하면 <b>왜 문제인지</b>와 <b>처방</b>이 그 자리에 열립니다.
-              <span class="legend-inline"><span class="hl-chip red"></span>위험 ${a.danger.length}<span class="hl-chip amber"></span>주의 ${a.caution.length}</span></p></div>
-          <div class="score-flow"><span class="from">${f.overall}</span><span class="arrow">→</span><span style="color:var(--${barColor(a.overall)})">${a.overall}</span></div>
+            <p class="work-hint">형광펜을 클릭하면 <b>왜 문제인지</b>와 <b>처방</b>이 그 자리에 열립니다.</p></div>
+          <span class="legend-inline"><span class="hl-chip red"></span>위험 ${a.danger.length}<span class="hl-chip amber"></span>주의 ${a.caution.length}</span>
         </div>
 
         ${S.editing ? `<textarea id="editText" rows="7">${esc(S.text)}</textarea>
@@ -546,14 +557,14 @@
         ${byteLine(S.text)}
 
         <div class="work-bar no-print">
-          ${next ? `<button class="btn btn-primary btn-sm" type="button" data-act="focus-issue" data-sig="${esc(next.signature)}">${active ? '다음 표시로 ▸' : `표시 ${all.length}곳 중 첫 곳부터 ▸`}</button>` : ''}
-          ${S.editing ? '' : '<button class="btn btn-sm" type="button" data-act="edit-toggle">✏️ 직접 편집</button>'}
-          <button class="btn btn-sm" type="button" data-act="undo" ${S.history.length ? '' : 'disabled'}>↶ 되돌리기</button>
-          <button class="btn btn-sm" type="button" data-act="reset-original" ${S.text !== S.original ? '' : 'disabled'}>원문으로</button>
+          ${next ? `<button class="btn btn-primary btn-lg" type="button" data-act="focus-issue" data-sig="${esc(next.signature)}">${active ? '다음 표시로 ▸' : `표시 ${all.length}곳 중 첫 곳부터 ▸`}</button>` : ''}
           <div class="spacer"></div>
+          <div class="tool-group">
+            ${S.editing ? '' : '<button class="btn btn-sm btn-ghost" type="button" data-act="edit-toggle">✏️ 편집</button>'}
+            <button class="btn btn-sm btn-ghost" type="button" data-act="undo" ${S.history.length ? '' : 'disabled'}>↶ 되돌리기</button>
+            <button class="btn btn-sm btn-ghost" type="button" data-act="reset-original" title="원문으로 되돌리기" ${S.text !== S.original ? '' : 'disabled'}>⟲ 원문</button>
+          </div>
           <button class="btn btn-sm" type="button" data-act="copy">📋 나이스용 복사</button>
-          <button class="btn btn-sm" type="button" data-act="card-open">🖼 보고서 이미지</button>
-          <button class="btn btn-primary btn-sm" type="button" data-act="case-new">+ 다른 세특 감사하기</button>
         </div>
         ${S.text !== S.original ? `<details class="diff-box"><summary>수정 전 · 후 비교</summary><div class="preview">${diffHtml(S.original, S.text)}</div></details>` : ''}
 
@@ -584,15 +595,20 @@
     </div>`;
   }
 
+  let stageTimer = 0;
+  /** 화면이 연달아 다시 그려질 때 마지막 것만 연출한다 */
+  function scheduleStage(fn) { clearTimeout(stageTimer); stageTimer = setTimeout(fn, 32); }
+
   function renderSingle() {
     const root = $('#view-single');
     stage.stop();
     keepScroll(() => { root.innerHTML = S.stage === 'input' ? renderSingleInput() : renderSingleReport(); });
     if (S.panel) requestAnimationFrame(positionPopover);
-    if (S.scan && S.stage === 'report') {
+    // 연출은 ‘마지막 렌더’에서 시작한다 (해시 변경 등으로 곧바로 다시 그려지면 앞선 예약은 취소)
+    if (S.scan && S.stage === 'report') scheduleStage(() => {
       S.scan = false;
-      requestAnimationFrame(() => stage.scanSingle(root.querySelector('.report'), S.audit));
-    }
+      stage.scanSingle($('#view-single .report'), S.audit);
+    });
   }
 
   /* ── 감사 보고서 한 장 (PNG) ── */
@@ -727,23 +743,46 @@
   /** 무엇을 몇 개나 검사했는지 — 결과가 ‘이상 없음’일 때도 꼼꼼함이 보이도록 남긴다 */
   function auditLogLines(a) {
     const n = (types) => a.issues.filter((i) => types.includes(i.type)).length;
-    const mark = (c) => (c ? `<b>${c}건</b>` : '<b class="ok">이상 없음</b>');
+    const mark = (c) => (c ? { value: `<b class="warn">${c}건</b>`, tone: 'warn' } : { value: '<b class="ok">이상 없음</b>', tone: 'pass' });
+    const forbidden = a.danger.filter((i) => i.type === 'forbidden').length;
     return [
-      { label: `기재 금지 ${lex.DANGER_RULES.length}개 항목 대조`, value: a.danger.filter((i) => i.type === 'forbidden').length ? `<b class="bad">위반 ${a.danger.filter((i) => i.type === 'forbidden').length}건</b>` : '<b class="ok">이상 없음</b>' },
-      { label: '분량 상한 1,500 byte', value: `${a.bytes.toLocaleString()} byte${a.bytes > lex.BYTE_LIMIT ? ' <b class="bad">초과</b>' : ` <b class="ok">여유 ${(lex.BYTE_LIMIT - a.bytes).toLocaleString()}</b>`}` },
-      { label: '역량의 근거 (평가 ← 사고 ← 행동)', value: mark(n(['evidence'])) },
-      { label: '구체성 · 과장 · 상투 표현', value: mark(n(['vague', 'exag', 'cliche'])) },
-      { label: '지식 단순 서술 · 소감 어투 · 활동 나열', value: mark(n(['knowledge', 'selfvoice', 'listing', 'growth'])) },
-      { label: '명사형 종결 · 기호 표기', value: mark(n(['style', 'symbol'])) },
-      { label: '학생 간 고유성 (이름 바꿔도 되는가)', value: `<b class="${a.swapRisk >= 60 ? 'bad' : 'ok'}">${a.swapRisk}%</b>` },
+      { label: `기재 금지 ${lex.DANGER_RULES.length}개 항목`, ...(forbidden ? { value: `<b class="bad">위반 ${forbidden}건</b>`, tone: 'fail' } : { value: '<b class="ok">이상 없음</b>', tone: 'pass' }) },
+      { label: '분량 (상한 1,500 byte)', ...(a.bytes > lex.BYTE_LIMIT
+        ? { value: `<b class="bad">${a.bytes.toLocaleString()} byte 초과</b>`, tone: 'fail' }
+        : { value: `<b class="ok">여유 ${(lex.BYTE_LIMIT - a.bytes).toLocaleString()} byte</b>`, tone: 'pass' }) },
+      { label: '역량의 근거', ...mark(n(['evidence'])) },
+      { label: '구체성 · 과장 · 상투 표현', ...mark(n(['vague', 'exag', 'cliche'])) },
+      { label: '지식 서술 · 소감 어투 · 나열', ...mark(n(['knowledge', 'selfvoice', 'listing', 'growth'])) },
+      { label: '명사형 종결 · 기호 표기', ...mark(n(['style', 'symbol'])) },
+      { label: '이름 바꿔도 되는 세특인가', value: `<b class="${a.swapRisk >= 60 ? 'bad' : 'ok'}">교체 가능성 ${a.swapRisk}%</b>`, tone: a.swapRisk >= 60 ? 'warn' : 'pass' },
     ];
   }
 
+  /** 검사 항목 — 줄글 대신 배지 격자. 통과 항목이 초록으로 채워져 ‘무엇을 몇 개 봤는지’가 한눈에 들어온다 */
   function auditLogHtml(a) {
     const chars = hangulChars(a.bytes);
     return `<div class="audit-log">
-      ${auditLogLines(a).map((l) => `<div class="log-line"><span>${esc(l.label)}</span><span>${l.value}</span></div>`).join('')}
-      <div class="log-done">약 ${chars.toLocaleString()}자 · ${lex.DANGER_RULES.length}개 금지 항목과 7대 기준 대조 완료 <span class="faint">(${S.auditMs >= 0.1 ? `${S.auditMs.toFixed(1)}ms` : '1ms 미만'})</span></div>
+      <div class="checks">
+        ${auditLogLines(a).map((l) => `<div class="log-line ${l.tone || ''}"><span class="k">${esc(l.label)}</span><span class="v">${l.value}</span></div>`).join('')}
+      </div>
+      <div class="log-done">약 ${chars.toLocaleString()}자 · 기재 금지 ${lex.DANGER_RULES.length}개 항목과 7대 기준을 모두 대조했습니다 <span class="faint">(${S.auditMs >= 0.1 ? `${S.auditMs.toFixed(1)}ms` : '1ms 미만'})</span></div>
+    </div>`;
+  }
+
+  /** 점수 게이지 — 숫자만 던지지 않고 얼마나 찼는지 보여 준다 */
+  function gaugeHtml(score, base, cap) {
+    const R = 52;
+    const CIRC = 2 * Math.PI * R;
+    const off = CIRC * (1 - Math.max(0, Math.min(100, score)) / 100);
+    return `<div class="gauge ${barColor(score)}" style="--c:${CIRC.toFixed(1)}">
+      <svg viewBox="0 0 120 120" aria-hidden="true">
+        <circle class="track" cx="60" cy="60" r="${R}"></circle>
+        <circle class="fill" cx="60" cy="60" r="${R}" style="stroke-dasharray:${CIRC.toFixed(1)};stroke-dashoffset:${off.toFixed(1)}"></circle>
+      </svg>
+      <div class="gauge-mid">
+        <div class="gauge-num"><span class="sv">${score}</span><small>점</small></div>
+        <div class="gauge-cap">${base != null ? `처음 ${base}점` : (cap || '품질 점수')}</div>
+      </div>
     </div>`;
   }
 
@@ -968,8 +1007,8 @@
           <div>
             <span class="pill-badge">세특 응급실</span>
             <h2 style="font-size:24px;margin-top:10px">${esc(C.title)} 생기부 건강도</h2>
-            <div class="row" style="align-items:baseline;gap:14px"><span class="health" style="color:var(--${barColor(c.health)})">${c.health}점</span>
-              ${r0 && r0.health !== c.health ? `<span class="muted">처음 ${r0.health}점</span>` : ''}</div>
+            <div class="row" style="gap:18px;margin-top:8px">${gaugeHtml(c.health, r0 && r0.health !== c.health ? r0.health : null, '학급 건강도')}
+              <div class="muted small">학급 전체 세특을 같은 기준으로 채점한 평균입니다.<br>아래 세 칸은 학생 한 명이 칩 하나입니다.</div></div>
           </div>
           <div class="stack" style="text-align:right">
             <div class="muted small">예상 수정시간</div><div class="display-num">약 ${c.estMinutes}분</div>
@@ -1278,10 +1317,10 @@
     else html = renderTreat();
     stage.stop();
     keepScroll(() => { root.innerHTML = html; });
-    if (C.sort && C.stage === 'dash') {
+    if (C.sort && C.stage === 'dash') scheduleStage(() => {
       C.sort = false;
-      requestAnimationFrame(() => stage.sortClass(root.querySelector('.triage')));
-    }
+      stage.sortClass($('#view-class .triage'));
+    });
   }
 
   function applyTreatment() {

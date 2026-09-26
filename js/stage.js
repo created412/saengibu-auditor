@@ -57,7 +57,7 @@
     if (!report) return;
     const marks = [...report.querySelectorAll('mark.hl')];
     const logs = [...report.querySelectorAll('.audit-log .log-line')];
-    const scoreEl = report.querySelector('.score-big .sv');
+    const scoreEl = report.querySelector('.sv'); // 게이지 한가운데 숫자
     const stampBox = report.querySelector('.stamp-box');
     const wrap = report.querySelector('.doc-wrap');
     const doc = report.querySelector('.doc');
