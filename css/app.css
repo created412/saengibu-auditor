@@ -527,3 +527,10 @@ table.students .num { font-variant-numeric: tabular-nums; font-weight: 700; }
 @media (prefers-reduced-motion: reduce) {
   .triage-col .triage-chip { transition: none; }
 }
+
+/* 감사 보고서 미리보기 */
+.modal { position: fixed; inset: 0; z-index: 60; background: rgba(38, 39, 44, .55); display: flex; align-items: center; justify-content: center; padding: 20px; }
+.modal-box { background: var(--card); border: 3px solid var(--blue); border-radius: var(--radius); box-shadow: var(--shadow);
+  padding: 16px 18px; width: min(860px, 100%); max-height: 92vh; display: flex; flex-direction: column; gap: 12px; }
+.card-preview { overflow: auto; background: var(--bg-2); border-radius: 12px; padding: 12px; flex: 1; min-height: 0; }
+.card-canvas { width: 100%; height: auto; display: block; border-radius: 8px; box-shadow: 0 6px 24px -12px rgba(38, 39, 44, .5); }

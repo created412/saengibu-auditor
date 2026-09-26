@@ -1,7 +1,7 @@
 /* 화면 — 개별 감사(진단 → 3초 처방 → 수정 작업대) / 학급 감사(세특 응급실 → 집중치료 → 완료 보고서)
  * 등급: 위험(기재 금지 · 바로 수정, 남아 있으면 입력 불가) / 주의(수정 권장, 품질 점수에 반영) */
 (function () {
-  const { ko, lex, engine: E, demo, art, stage } = window.SA;
+  const { ko, lex, engine: E, demo, art, stage, report } = window.SA;
 
   /* ───────────── 유틸 ───────────── */
   const $ = (sel, root = document) => root.querySelector(sel);
@@ -552,6 +552,7 @@
           <button class="btn btn-sm" type="button" data-act="reset-original" ${S.text !== S.original ? '' : 'disabled'}>원문으로</button>
           <div class="spacer"></div>
           <button class="btn btn-sm" type="button" data-act="copy">📋 나이스용 복사</button>
+          <button class="btn btn-sm" type="button" data-act="card-open">🖼 보고서 이미지</button>
           <button class="btn btn-primary btn-sm" type="button" data-act="case-new">+ 다른 세특 감사하기</button>
         </div>
         ${S.text !== S.original ? `<details class="diff-box"><summary>수정 전 · 후 비교</summary><div class="preview">${diffHtml(S.original, S.text)}</div></details>` : ''}
@@ -593,6 +594,135 @@
       requestAnimationFrame(() => stage.scanSingle(root.querySelector('.report'), S.audit));
     }
   }
+
+  /* ── 감사 보고서 한 장 (PNG) ── */
+
+  /** 원문과 수정본에서 ‘바뀐 문장’만 짝지어 뽑는다 (LCS로 그대로인 문장을 걸러낸다) */
+  function sentencePairs(before, after) {
+    const text = (s) => String(s && s.text != null ? s.text : s).trim();
+    const A = ko.splitSentences(before).map(text).filter(Boolean);
+    const B = ko.splitSentences(after).map(text).filter(Boolean);
+    const dp = Array.from({ length: A.length + 1 }, () => new Array(B.length + 1).fill(0));
+    for (let i = A.length - 1; i >= 0; i--) {
+      for (let j = B.length - 1; j >= 0; j--) {
+        dp[i][j] = A[i] === B[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
+      }
+    }
+    const pairs = [];
+    let i = 0;
+    let j = 0;
+    let rem = [];
+    let add = [];
+    const flush = () => {
+      while (rem.length || add.length) pairs.push({ before: rem.shift() || '', after: add.shift() || '' });
+    };
+    while (i < A.length || j < B.length) {
+      if (i < A.length && j < B.length && A[i] === B[j]) { flush(); i++; j++; continue; }
+      if (j < B.length && (i >= A.length || dp[i][j + 1] >= dp[i + 1][j])) { add.push(B[j]); j++; continue; }
+      rem.push(A[i]); i++;
+    }
+    flush();
+    return pairs;
+  }
+
+  function singleCardData() {
+    const a = S.audit;
+    const f = S.first || a;
+    const m = singleMetrics();
+    const v = E.verdict(a);
+    const checks = auditLogLines(a).map((l) => ({
+      label: l.label,
+      value: String(l.value).replace(/<[^>]+>/g, ''),
+      tone: /<b class="bad"/.test(l.value) ? 'bad' : /<b class="ok"/.test(l.value) ? 'ok' : '',
+    }));
+    const chips = [];
+    if (f.danger.length || a.danger.length) chips.push({ tone: a.danger.length ? 'red' : 'green', text: `위험(기재 금지) ${f.danger.length}건 → ${a.danger.length}건` });
+    chips.push({ tone: a.caution.length ? 'amber' : 'green', text: `주의 ${f.caution.length}건 → ${a.caution.length}건` });
+    chips.push({ tone: 'blue', text: `${a.bytes.toLocaleString()} byte / 1,500` });
+    return {
+      badge: '생기부 감사 보고서',
+      title: '세특 감사 결과',
+      date: new Date().toLocaleDateString('ko-KR'),
+      score: { from: f.overall, to: a.overall, label: '품질 점수' },
+      verdict: v,
+      chips,
+      checksTitle: `검사 항목 — 기재 금지 ${lex.DANGER_RULES.length}개 항목과 7대 기준 대조`,
+      checks,
+      pairsTitle: '고친 문장 — 위(원문) / 아래(수정본)',
+      pairs: sentencePairs(S.original, S.text),
+      ledger: [
+        { n: m.facts, label: '교사 확인 사실' },
+        { n: m.improved, label: '개선한 문장' },
+        { n: m.aiAdded, label: 'AI 임의 추가', tone: m.aiAdded ? 'warn' : 'zero' },
+      ],
+      note: '「2026학년도 학교생활기록부 기재요령(고등학교)」 기준으로 점검한 결과입니다. 수정은 선생님이 확인한 사실로만 이루어지며, 프로그램이 학생 활동을 임의로 지어내지 않습니다. 최종 입력 전 선생님의 확인이 필요한 초안입니다. · 생기부 감사관',
+    };
+  }
+
+  function classCardData() {
+    const b = C.before;
+    const n = C.now;
+    const t = classTotals();
+    const it = (o, k) => o.issueTotals[k] || 0;
+    const pairs = [];
+    C.students.forEach((s) => {
+      if (pairs.length >= 3 || s.text === s.original) return;
+      const p = sentencePairs(s.original, s.text).find((x) => x.before && x.after);
+      if (p) pairs.push(p);
+    });
+    return {
+      badge: '학급 감사 완료 보고서',
+      title: C.title || '우리 반',
+      date: new Date().toLocaleDateString('ko-KR'),
+      score: { from: b.health, to: n.health, label: '학급 생기부 건강도' },
+      verdict: null,
+      chips: [
+        { tone: n.triage.red ? 'red' : 'green', text: `입력 불가 학생 ${b.triage.red}명 → ${n.triage.red}명` },
+        { tone: 'blue', text: `학생 ${n.stats.students}명` },
+      ],
+      checksTitle: '학급 집계 — 감사 전 → 후',
+      checks: [
+        { label: '위험 · 기재 금지', value: `${it(b, 'forbidden') + it(b, 'overflow')}건 → ${it(n, 'forbidden') + it(n, 'overflow')}건`, tone: it(n, 'forbidden') + it(n, 'overflow') ? 'bad' : 'ok' },
+        { label: '역량의 근거 부족', value: `${it(b, 'evidence')}건 → ${it(n, 'evidence')}건` },
+        { label: '추상적 표현', value: `${it(b, 'vague')}건 → ${it(n, 'vague')}건` },
+        { label: '지식 단순 서술', value: `${it(b, 'knowledge')}건 → ${it(n, 'knowledge')}건` },
+        { label: '학생 간 반복', value: `${b.stats.dupPairs}쌍 → ${n.stats.dupPairs}쌍` },
+        { label: '고유성 부족', value: `${b.stats.lowUnique}명 → ${n.stats.lowUnique}명` },
+      ],
+      pairsTitle: '고친 문장 (보기)',
+      pairs,
+      ledger: [
+        { n: t.facts, label: '교사 확인 사실' },
+        { n: t.improved, label: '개선한 문장' },
+        { n: t.aiAdded, label: 'AI 임의 추가', tone: t.aiAdded ? 'warn' : 'zero' },
+      ],
+      note: '「2026학년도 학교생활기록부 기재요령(고등학교)」 기준으로 점검한 결과입니다. 학생 이름·기록은 이 브라우저 밖으로 나가지 않으며, 수정은 선생님이 확인한 사실로만 이루어집니다. · 생기부 감사관',
+    };
+  }
+
+  let cardCanvas = null;
+
+  function openCard(data, filename) {
+    cardCanvas = report.drawCard(data);
+    cardCanvas.className = 'card-canvas';
+    cardCanvas.dataset.filename = filename;
+    const host = $('#cardModal');
+    host.innerHTML = `<div class="modal-box">
+      <div class="row" style="justify-content:space-between">
+        <b>감사 보고서 미리보기</b>
+        <button class="btn btn-sm btn-ghost" type="button" data-act="card-close">닫기 ✕</button>
+      </div>
+      <div class="card-preview"></div>
+      <div class="row" style="justify-content:flex-end">
+        <span class="faint small" style="margin-right:auto">${cardCanvas.width}×${cardCanvas.height}px · 발표·연수 자료에 그대로 쓰실 수 있습니다</span>
+        <button class="btn btn-primary" type="button" data-act="card-save">PNG로 저장</button>
+      </div>
+    </div>`;
+    host.querySelector('.card-preview').appendChild(cardCanvas);
+    host.hidden = false;
+  }
+
+  function closeCard() { const h = $('#cardModal'); h.hidden = true; h.innerHTML = ''; cardCanvas = null; }
 
   /** 무엇을 몇 개나 검사했는지 — 결과가 ‘이상 없음’일 때도 꼼꼼함이 보이도록 남긴다 */
   function auditLogLines(a) {
@@ -1130,6 +1260,7 @@
         <div class="row" style="justify-content:center">
           <button class="btn" type="button" data-act="to-dash">대시보드로</button>
           <button class="btn btn-primary" type="button" data-act="export-csv">결과 CSV 내려받기</button>
+          <button class="btn" type="button" data-act="card-open-class">🖼 보고서 이미지</button>
         </div>
       </div>
       <div class="card card-pad">
@@ -1203,6 +1334,7 @@
   window.addEventListener('hashchange', render);
 
   document.addEventListener('click', async (ev) => {
+    if (ev.target.id === 'cardModal') { closeCard(); return; } // 미리보기 바깥을 누르면 닫는다
     const go = ev.target.closest('[data-go]');
     if (go) { ev.preventDefault(); location.hash = `#${go.dataset.go}`; return; }
     const el = ev.target.closest('[data-act]');
@@ -1225,6 +1357,20 @@
         startSingle(text, $('#inSource').value);
         break;
       }
+      case 'card-open':
+        openCard(singleCardData(), `세특_감사보고서_${new Date().toISOString().slice(0, 10)}.png`);
+        break;
+      case 'card-open-class':
+        openCard(classCardData(), `${(C.title || '학급').replace(/[\\/:*?"<>|]/g, '')}_감사보고서_${new Date().toISOString().slice(0, 10)}.png`);
+        break;
+      case 'card-save': {
+        if (!cardCanvas) return;
+        const size = await report.download(cardCanvas, cardCanvas.dataset.filename);
+        toast(`보고서 이미지를 저장했습니다 (${Math.round(size / 1024).toLocaleString()}KB).`);
+        break;
+      }
+      case 'card-close':
+        closeCard(); break;
       case 'single-new':
         S.stage = 'input'; S.panel = null; saveCase(); render(); break;
       case 'case-prev':
@@ -1523,7 +1669,9 @@
   });
 
   document.addEventListener('keydown', (ev) => {
-    if (ev.key === 'Escape' && S.panel) { S.panel = null; render(); }
+    if (ev.key !== 'Escape') return;
+    if (cardCanvas) { closeCard(); return; }
+    if (S.panel) { S.panel = null; render(); }
   });
 
   window.addEventListener('resize', () => { if (S.panel) positionPopover(); });
