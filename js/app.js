@@ -1,7 +1,7 @@
 /* 화면 — 개별 감사(진단 → 3초 처방 → 수정 작업대) / 학급 감사(세특 응급실 → 집중치료 → 완료 보고서)
  * 등급: 위험(기재 금지 · 바로 수정, 남아 있으면 입력 불가) / 주의(수정 권장, 품질 점수에 반영) */
 (function () {
-  const { ko, lex, engine: E, demo, art } = window.SA;
+  const { ko, lex, engine: E, demo, art, stage } = window.SA;
 
   /* ───────────── 유틸 ───────────── */
   const $ = (sel, root = document) => root.querySelector(sel);
@@ -72,7 +72,9 @@
   };
 
   function reauditSingle() {
+    const t0 = performance.now();
     S.audit = E.audit(S.text, { sources: S.source, dismissed: S.dismissed, verified: S.verified });
+    S.auditMs = performance.now() - t0;
     if (S.cases) S.cases[S.idx] = packCase(); // 사례를 옮겨 다녀도 작업 내용이 남는다
   }
 
@@ -93,6 +95,7 @@
     reauditSingle();
     S.first = S.audit;
     S.popStamp = true;
+    S.scan = true; // 결과를 바로 던지지 않고 검사 장면을 보여 준다
     saveCase();
     location.hash = '#single';
     render();
@@ -502,7 +505,7 @@
     <div class="report">
       <div class="card card-pad report-head-card">
         <div class="report-head">
-          <div><span class="pill-badge">생기부 감사 결과</span><div class="score-big">${a.overall}<small> / 100</small></div><div class="small muted">품질 점수${f && f.overall !== a.overall ? ` · 처음 ${f.overall}점` : ''}</div></div>
+          <div><span class="pill-badge">생기부 감사 결과</span><div class="score-big"><span class="sv">${a.overall}</span><small> / 100</small></div><div class="small muted">품질 점수${f && f.overall !== a.overall ? ` · 처음 ${f.overall}점` : ''}</div></div>
           <div class="head-mid stack" style="margin:0">
             <div class="row" style="gap:8px">
               <span class="gcount red ${a.danger.length ? '' : 'zero'}"><b>위험 ${a.danger.length}</b> 기재 금지 · 바로 수정</span>
@@ -514,9 +517,10 @@
             ${caseNav({ big: true })}
             <div class="faint small">다른 학생 세특을 이어서 보시려면 위 파란 버튼을 누르세요. 입력 화면으로 가고, 지금 세특은 그대로 남습니다.</div>
           </div>
-          <div class="${pop ? 'pop' : ''}">${verdictTag(v, true)}</div>
+          <div class="stamp-box ${pop ? 'pop' : ''}">${verdictTag(v, true)}</div>
         </div>
         ${a.danger.length ? `<div class="alert red">기재 금지 사항 ${a.danger.length}건이 남아 있어 <b>나이스에 입력할 수 없습니다.</b> 아래 기록에서 <b>빨간 형광펜</b>을 눌러 먼저 고쳐 주세요. 품질 점수와는 별개로 판정합니다.</div>` : ''}
+        ${auditLogHtml(a)}
       </div>
 
       <div class="card card-pad work-card">
@@ -581,8 +585,36 @@
 
   function renderSingle() {
     const root = $('#view-single');
+    stage.stop();
     keepScroll(() => { root.innerHTML = S.stage === 'input' ? renderSingleInput() : renderSingleReport(); });
     if (S.panel) requestAnimationFrame(positionPopover);
+    if (S.scan && S.stage === 'report') {
+      S.scan = false;
+      requestAnimationFrame(() => stage.scanSingle(root.querySelector('.report'), S.audit));
+    }
+  }
+
+  /** 무엇을 몇 개나 검사했는지 — 결과가 ‘이상 없음’일 때도 꼼꼼함이 보이도록 남긴다 */
+  function auditLogLines(a) {
+    const n = (types) => a.issues.filter((i) => types.includes(i.type)).length;
+    const mark = (c) => (c ? `<b>${c}건</b>` : '<b class="ok">이상 없음</b>');
+    return [
+      { label: `기재 금지 ${lex.DANGER_RULES.length}개 항목 대조`, value: a.danger.filter((i) => i.type === 'forbidden').length ? `<b class="bad">위반 ${a.danger.filter((i) => i.type === 'forbidden').length}건</b>` : '<b class="ok">이상 없음</b>' },
+      { label: '분량 상한 1,500 byte', value: `${a.bytes.toLocaleString()} byte${a.bytes > lex.BYTE_LIMIT ? ' <b class="bad">초과</b>' : ` <b class="ok">여유 ${(lex.BYTE_LIMIT - a.bytes).toLocaleString()}</b>`}` },
+      { label: '역량의 근거 (평가 ← 사고 ← 행동)', value: mark(n(['evidence'])) },
+      { label: '구체성 · 과장 · 상투 표현', value: mark(n(['vague', 'exag', 'cliche'])) },
+      { label: '지식 단순 서술 · 소감 어투 · 활동 나열', value: mark(n(['knowledge', 'selfvoice', 'listing', 'growth'])) },
+      { label: '명사형 종결 · 기호 표기', value: mark(n(['style', 'symbol'])) },
+      { label: '학생 간 고유성 (이름 바꿔도 되는가)', value: `<b class="${a.swapRisk >= 60 ? 'bad' : 'ok'}">${a.swapRisk}%</b>` },
+    ];
+  }
+
+  function auditLogHtml(a) {
+    const chars = hangulChars(a.bytes);
+    return `<div class="audit-log">
+      ${auditLogLines(a).map((l) => `<div class="log-line"><span>${esc(l.label)}</span><span>${l.value}</span></div>`).join('')}
+      <div class="log-done">약 ${chars.toLocaleString()}자 · ${lex.DANGER_RULES.length}개 금지 항목과 7대 기준 대조 완료 <span class="faint">(${S.auditMs >= 0.1 ? `${S.auditMs.toFixed(1)}ms` : '1ms 미만'})</span></div>
+    </div>`;
   }
 
   function currentIssue(sig) {
@@ -713,6 +745,7 @@
     classReaudit();
     C.before = C.now;
     C.stage = 'dash';
+    C.sort = true; // 30명이 세 칸으로 갈라지는 장면
     render();
     window.scrollTo({ top: 0 });
   }
@@ -767,6 +800,23 @@
     ${legend()}`;
   }
 
+  /** 분류 결과 — 학생 한 명이 칩 하나. 감사 직후 세 칸으로 갈라지는 장면을 보여 준다 */
+  function triageHtml(c) {
+    const cols = [
+      { key: 'red', n: c.triage.red, label: '위험 · 기재 금지 포함<br>입력 불가' },
+      { key: 'amber', n: c.triage.amber, label: '주의 · 보완 권장' },
+      { key: 'green', n: c.triage.green, label: '양호' },
+    ];
+    return `<div class="triage">${cols.map((col) => {
+      const list = c.results.filter((r) => r.verdict.key === col.key);
+      return `<div class="triage-col ${col.key}">
+        <strong><span class="cnt" data-n="${col.n}">${col.n}</span>명</strong><span>${col.label}</span>
+        <div class="chips">${list.map((r, i) => `<button class="triage-chip ${col.key}" type="button" style="--i:${i}"
+          data-act="open-single" data-id="${esc(r.id)}" title="${esc(`${r.id} ${r.name} · ${r.audit.overall}점`)}"><span class="sr">${esc(r.name)}</span></button>`).join('')}</div>
+      </div>`;
+    }).join('')}</div>`;
+  }
+
   function renderClassDash() {
     const c = C.now;
     const r0 = C.before;
@@ -795,11 +845,7 @@
             <div class="muted small">예상 수정시간</div><div class="display-num">약 ${c.estMinutes}분</div>
           </div>
         </div>
-        <div class="triage">
-          <div class="red"><strong>${c.triage.red}명</strong><span>위험 · 기재 금지 포함<br>입력 불가</span></div>
-          <div class="amber"><strong>${c.triage.amber}명</strong><span>주의 · 보완 권장</span></div>
-          <div class="green"><strong>${c.triage.green}명</strong><span>양호</span></div>
-        </div>
+        ${triageHtml(c)}
         <div class="row" style="margin-top:18px">
           <button class="btn btn-red btn-lg" type="button" data-act="treat-start">${doneCount ? '집중치료 이어하기' : '집중치료 시작'}</button>
           ${doneCount ? '<button class="btn" type="button" data-act="treat-finish">완료 보고서</button>' : ''}
@@ -1099,7 +1145,12 @@
     if (C.stage === 'input') html = renderClassInput();
     else if (C.stage === 'dash') html = renderClassDash();
     else html = renderTreat();
+    stage.stop();
     keepScroll(() => { root.innerHTML = html; });
+    if (C.sort && C.stage === 'dash') {
+      C.sort = false;
+      requestAnimationFrame(() => stage.sortClass(root.querySelector('.triage')));
+    }
   }
 
   function applyTreatment() {

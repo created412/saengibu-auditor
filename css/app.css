@@ -243,8 +243,9 @@ details.source-box summary { cursor: pointer; font-weight: 700; color: var(--ink
 mark.hl {
   color: inherit; cursor: pointer; padding: 0 3px; border: 0; border-radius: 3px;
   background-image: linear-gradient(to bottom, transparent 8%, var(--hl) 8%, var(--hl) 92%, transparent 92%);
-  background-color: transparent; box-decoration-break: clone; -webkit-box-decoration-break: clone;
-  transition: filter .12s;
+  background-color: transparent; background-repeat: no-repeat; background-size: 100% 100%;
+  box-decoration-break: clone; -webkit-box-decoration-break: clone;
+  transition: filter .12s, background-size .22s linear;
 }
 mark.hl.red { --hl: rgba(240, 104, 94, .5); }
 mark.hl.amber { --hl: rgba(255, 206, 56, .72); }
@@ -463,4 +464,66 @@ table.students .num { font-variant-numeric: tabular-nums; font-weight: 700; }
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
+}
+
+/* ───────────── 감사 장면 연출 — 결과를 순서대로 드러낸다 ───────────── */
+/* 검사 항목 로그: 무엇을 몇 개 대조했는지 남는 기록 (연출이 끝나도 그대로 보인다) */
+.audit-log { margin-top: 13px; border-top: 2px dotted var(--line-2); padding-top: 10px; display: grid; gap: 2px; }
+.log-line { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; align-items: baseline;
+  font-size: 13px; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+.log-line > span:first-child::before { content: '▸ '; color: var(--ink-3); }
+.log-line b { font-weight: 700; color: var(--ink); }
+.log-line b.bad { color: var(--red); }
+.log-line b.ok { color: var(--green); }
+.log-done { margin-top: 6px; font-size: 12px; color: var(--ink-3); }
+
+/* 스캔선 — 기록 위를 한 번 훑고 지나간다 */
+.scanline { position: absolute; left: 12px; right: 12px; top: 24px; height: 0; pointer-events: none; z-index: 3;
+  animation: scanmove .95s cubic-bezier(.45, .05, .4, 1) forwards; }
+.scanline::before { content: ''; position: absolute; left: 0; right: 0; top: 0; height: 2px; border-radius: 2px;
+  background: linear-gradient(90deg, transparent, var(--blue-deep), transparent);
+  box-shadow: 0 0 16px 4px rgba(37, 99, 235, .28); }
+.scanline > span { position: absolute; right: 0; top: -13px; font: 700 10.5px/1 var(--sans); letter-spacing: .06em;
+  color: #fff; background: var(--ink); padding: 5px 8px; border-radius: 999px; }
+.scanline.done { opacity: 0; transition: opacity .25s; }
+@keyframes scanmove { from { transform: translateY(0); } to { transform: translateY(var(--scan-h, 200px)); } }
+
+/* 검사 중에는 아직 아무것도 칠해지지 않은 상태 */
+.report.scanning .doc, .report.scanning .work-bar, .report.scanning .cue-row, .report.scanning .case-nav { pointer-events: none; }
+.report.scanning mark.hl { background-size: 0 100%; }
+.report.scanning mark.hl.painted { background-size: 100% 100%; }
+.report.scanning mark.hl sup { opacity: 0; transition: opacity .2s .05s; }
+.report.scanning mark.hl.painted sup { opacity: 1; }
+.report.scanning .log-line { opacity: 0; transform: translateY(-3px); }
+.report.scanning .log-line.on { opacity: 1; transform: none; }
+.log-line { transition: opacity .18s, transform .18s; }
+.report.scanning .bar > i { width: 0 !important; }
+.bar > i { transition: width .75s cubic-bezier(.2, .8, .2, 1); }
+.report.scanning .stamp-box { opacity: 0; }
+.stamp-box { transition: opacity .12s; }
+
+@media (prefers-reduced-motion: reduce) {
+  .scanline { display: none; }
+  .log-line, .bar > i, mark.hl { transition: none; }
+}
+
+/* 학급 분류 — 학생 한 명이 칩 하나 */
+.triage-col strong { display: block; font: 400 32px/1 var(--display); }
+.triage-col strong .cnt { font: inherit; font-variant-numeric: tabular-nums; }
+.chips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 10px; min-height: 15px; }
+.triage-col .triage-chip {
+  width: 15px; height: 15px; padding: 0; border: 0; border-radius: 5px; cursor: pointer;
+  opacity: .55; transition: opacity .12s, transform .12s;
+}
+.triage-col.red .triage-chip { background: var(--red); }
+.triage-col.amber .triage-chip { background: var(--amber-line); }
+.triage-col.green .triage-chip { background: var(--green); }
+.triage-col .triage-chip:hover { opacity: 1; transform: translateY(-2px) scale(1.15); }
+.triage-chip .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.triage.sorting .triage-col .triage-chip { opacity: 0; transform: translateY(-16px) scale(.5); }
+.triage.sorting .triage-col .triage-chip.landed { opacity: .55; transform: none;
+  transition: opacity .22s cubic-bezier(.2, 1.5, .4, 1), transform .22s cubic-bezier(.2, 1.5, .4, 1); }
+
+@media (prefers-reduced-motion: reduce) {
+  .triage-col .triage-chip { transition: none; }
 }
