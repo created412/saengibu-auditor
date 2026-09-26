@@ -282,3 +282,25 @@ test('추상 낱말 앞에 구체적 수식어가 있으면 빈 표현이 아니
   assert.ok(E.audit('자료를 조사하여 내용을 이해함.').issues.some((i) => i.type === 'vague'));
   assert.ok(E.audit('책을 읽고 의미를 파악함.').issues.some((i) => i.type === 'vague'));
 });
+
+test('〔 〕를 지우든 남겨 두든 똑같이 적용된다', () => {
+  const withB = '〔갑신정변 자료분석〕을 근거로 〔탐구력을 기른 것〕이라고 판단함';
+  const plain = '갑신정변 자료분석을 근거로 탐구력을 기른 것이라고 판단함';
+  assert.equal(E.slotState(withB).text, plain);
+  assert.deepEqual(E.slotState(withB).unfilled, []);
+  // 예시 문구가 그대로 남아 있으면 아직 빈칸
+  assert.equal(E.slotState('〔무엇〕을 근거로 〔어떤 판단〕이라고 판단함').unfilled.length, 2);
+  // 채운 말에 맞춰 조사도 고쳐 준다
+  assert.equal(E.slotState('〔사료 3건의 비교〕을 근거로').text, '사료 3건의 비교를 근거로');
+  // 예시 문구와 똑같은 말만 적으면(‘자료’ 등) 아직 채우지 않은 것으로 본다 — 더 구체적으로 적게 한다
+  assert.equal(E.slotState('〔자료〕을 근거로').unfilled.length, 1);
+  // 실제 적용 결과가 같아야 한다
+  const t = '교내 역사토론대회에서 최우수상을 수상하는 등 대학 수준의 탁월한 역사 인식을 보여줌.';
+  const a = E.audit(t);
+  const ev = a.issues.find((i) => i.type === 'evidence' && i.cat === 'thinking');
+  const r1 = E.applyAnswer(t, ev, { kind: 'facts', facts: [withB], keepEval: true });
+  const r2 = E.applyAnswer(t, ev, { kind: 'facts', facts: [plain], keepEval: true });
+  assert.equal(r1.text, r2.text);
+  assert.doesNotMatch(r1.text, /〔|〕/);
+  assert.ok(E.guard(t, r1.text, r1.facts).ok, 'AI 임의 추가로 잡히면 안 됨');
+});

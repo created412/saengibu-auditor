@@ -517,6 +517,53 @@
     return { key: 'amber', label: '주의 · 재작성 권장', stamp: '주의', sub: '재작성 권장' };
   }
 
+  /* ───────────── 〔 〕 칸 ───────────── */
+
+  /** 문장 틀이 비워 둔 칸의 이름들 — 이 말이 그대로 남아 있으면 ‘아직 안 채운 칸’이다 */
+  const SLOT_LABELS = new Set();
+  const addSlotLabels = (s) => {
+    const re = /〔([^〕]*)〕/g;
+    let m;
+    while ((m = re.exec(String(s)))) SLOT_LABELS.add(m[1].trim());
+  };
+  Object.values(lex.CANDIDATES || {}).forEach((arr) => (arr || []).forEach(addSlotLabels));
+  Object.values(lex.TEMPLATES || {}).forEach((arr) => (arr || []).forEach(addSlotLabels));
+  // rebuildSuggestions가 만드는 칸 이름
+  ['무엇', '어떤 판단', '찾아낸 차이', '근거가 된 대목', '결론', '학생이 한 말·행동', '판단',
+    '구체적으로 찾아낸 것', '어떠하다', '대상', '특징·문제', '기준', '사례·자료', '확인한 결과',
+    '학생의 말', '예시', '문제·과제', '방법', '결과', '장면', '학생의 판단', '발견한 것',
+    '판단·결론', '처음 생각', '근거', '바뀐 판단'].forEach((x) => SLOT_LABELS.add(x));
+
+  const JOSA_PAIRS = [['을', '를'], ['이', '가'], ['은', '는'], ['과', '와'], ['으로', '로']];
+
+  /**
+   * 〔 〕 칸 상태. 교사가 내용을 채웠으면 괄호를 벗기고(뒤따르는 조사도 맞춰 주고),
+   * 예시 문구가 그대로 남아 있으면 ‘안 채운 칸’으로 센다.
+   * 괄호를 지우든 남기든 똑같이 적용되도록 하기 위한 장치다.
+   */
+  function slotState(text) {
+    const src = String(text == null ? '' : text);
+    const unfilled = [];
+    const out = src.replace(/〔([^〕]*)〕\s*(으로|을|를|이|가|은|는|과|와|로)?/g, (whole, inner, p) => {
+      const v = String(inner).trim();
+      if (!v || SLOT_LABELS.has(v)) { unfilled.push(v); return whole; }
+      if (!p) return v;
+      const pair = JOSA_PAIRS.find((x) => x.includes(p));
+      return pair ? ko.josa(v, `${pair[0]}/${pair[1]}`) : v + p;
+    });
+    return { text: out.replace(/\s{2,}/g, ' ').trim(), unfilled };
+  }
+
+  /** 교사가 적은 값에서 〔 〕를 걷어낸다 (적용 직전에 한 번) */
+  function normalizeAnswer(answer) {
+    if (!answer || typeof answer !== 'object') return answer;
+    const fix = (v) => (typeof v === 'string' ? slotState(v).text : v);
+    const out = { ...answer };
+    if (Array.isArray(out.facts)) out.facts = out.facts.map(fix).filter(Boolean);
+    ['detail', 'text', 'replacement'].forEach((k) => { if (typeof out[k] === 'string') out[k] = fix(out[k]); });
+    return out;
+  }
+
   /* ───────────── 대체 문장 만들기 ───────────── */
 
   const SOURCE_WORDS = /사료|자료|보고서|기사|통계|영상|실험|그래프|지도|작품|문헌|기록|데이터|설문|원문|사진|도표|논설|뉴스|교과서|책|소설|시집|판결문|법전/;
@@ -888,6 +935,7 @@
    * answer.kind: facts | delete | keep | detail | restyle
    */
   function applyAnswer(text, issue, answer) {
+    answer = normalizeAnswer(answer); // 〔 〕를 남겨 둬도 같은 결과가 되도록
     const idx = locate(text, issue);
     const res = { text, facts: [], dismissed: null, changed: false };
     if (answer.kind === 'keep') { res.dismissed = issue.signature; res.confirmed = !!answer.confirmed; return res; }
@@ -1260,7 +1308,7 @@
 
   SA.engine = {
     ISSUE_META, GRADE, audit, verdict, buildQuestion, topQuestions, expectedScore, applyAnswer, applyAnswers, guard,
-    rebuildSuggestions, composeSentence, fragments,
+    rebuildSuggestions, composeSentence, fragments, slotState,
     classAudit, findEvidence, changedSentences, diffWords, splitClauses, skeletonOf,
     specificStems, evidenceStrength,
   };

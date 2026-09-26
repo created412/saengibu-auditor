@@ -9,7 +9,8 @@
   const critName = (key) => (lex.CRITERIA.find((c) => c.key === key) || {}).name || '';
   const barColor = (v) => (v >= 80 ? 'green' : v >= 60 ? 'amber' : 'red');
   const hangulChars = (bytes) => Math.round(bytes / 3);
-  const hasSlot = (t) => lex.SLOT.test(String(t));
+  // 〔 〕를 지우든 남기든 같게 — 예시 문구가 그대로 남은 칸만 ‘안 채운 칸’으로 본다
+  const hasSlot = (t) => E.slotState(t).unfilled.length > 0;
 
   let toastTimer;
   function toast(msg) {
