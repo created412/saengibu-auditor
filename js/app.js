@@ -222,6 +222,10 @@
     };
     const points = [...cuts].filter((p) => p >= 0 && p <= text.length).sort((a, b) => a - b);
     const label = (i) => (opts.labels ? opts.labels[i.signature] : '');
+    // 읽기 순번 — 어절 하나, 형광펜 구절 하나가 각각 ‘읽는 단위’가 된다
+    let ri = 0;
+    const words = (chunk, si) => chunk.split(/(\s+)/).map((w) => (/^\s*$/.test(w) ? w
+      : `<span class="sg"${si} data-ri="${ri++}">${esc(w)}</span>`)).join('');
     let html = '';
     for (let k = 0; k < points.length - 1; k++) {
       const s = points[k];
@@ -230,10 +234,10 @@
       const span = spans.find((r) => s >= r.s && e <= r.e);
       const scope = scopes.find((r) => s >= r.s && e <= r.e);
       const si = sentOf(s);
-      let out = si ? `<span class="sg"${si}>${esc(text.slice(s, e))}</span>` : esc(text.slice(s, e));
+      let out = si ? words(text.slice(s, e), si) : esc(text.slice(s, e));
       if (span) {
         const i = span.issue;
-        out = `<mark class="hl ${i.severity} ${opts.active === i.signature ? 'active' : ''}"${si} role="button" tabindex="0" data-act="focus-issue" data-sig="${esc(i.signature)}" title="${esc(i.gradeName)} · ${esc(i.label)} — 클릭하면 안내와 처방이 열립니다">${esc(text.slice(s, e))}${e === span.e ? `<sup>${esc(label(i))}</sup>` : ''}</mark>`;
+        out = `<mark class="hl ${i.severity} ${opts.active === i.signature ? 'active' : ''}"${si} data-ri="${ri++}" data-kind="${esc(i.gradeName)}" data-name="${esc(i.type === 'forbidden' ? i.titles.join('·') : i.label)}" role="button" tabindex="0" data-act="focus-issue" data-sig="${esc(i.signature)}" title="${esc(i.gradeName)} · ${esc(i.label)} — 클릭하면 안내와 처방이 열립니다">${esc(text.slice(s, e))}${e === span.e ? `<sup>${esc(label(i))}</sup>` : ''}</mark>`;
       }
       if (scope) {
         const i = scope.issue;
@@ -558,6 +562,7 @@
             <span class="gcount amber rh-amber zero"><b>주의 0</b> 수정 권장</span>
           </div>
           <div class="rh-bar"><i></i></div>
+          <div class="rh-found"></div>
         </div>
         ${S.editing ? `<textarea id="editText" rows="7">${esc(S.text)}</textarea>
           <p class="faint small" style="margin:6px 0 0">교과 내용 속 낱말을 잘못 잡았거나 분량을 줄여야 할 때 직접 고치세요. 저장하면 다시 감사합니다.</p>
@@ -986,18 +991,29 @@
   }
 
   /** 분류 결과 — 학생 한 명이 칩 하나. 감사 직후 세 칸으로 갈라지는 장면을 보여 준다 */
+  /** 분류 결과 — 학생 한 명이 카드 한 장. 감사 직후 카드가 세 칸으로 날아가 꽂힌다 */
   function triageHtml(c) {
     const cols = [
-      { key: 'red', n: c.triage.red, label: '위험 · 기재 금지 포함<br>입력 불가' },
-      { key: 'amber', n: c.triage.amber, label: '주의 · 보완 권장' },
-      { key: 'green', n: c.triage.green, label: '양호' },
+      { key: 'red', n: c.triage.red, label: '기재 금지 포함 · 입력 불가' },
+      { key: 'amber', n: c.triage.amber, label: '수정 권장' },
+      { key: 'green', n: c.triage.green, label: '그대로 입력 가능' },
     ];
+    const head = { red: '위험', amber: '주의', green: '양호' };
     return `<div class="triage">${cols.map((col) => {
       const list = c.results.filter((r) => r.verdict.key === col.key);
       return `<div class="triage-col ${col.key}">
-        <strong><span class="cnt" data-n="${col.n}">${col.n}</span>명</strong><span>${col.label}</span>
-        <div class="chips">${list.map((r, i) => `<button class="triage-chip ${col.key}" type="button" style="--i:${i}"
-          data-act="open-single" data-id="${esc(r.id)}" title="${esc(`${r.id} ${r.name} · ${r.audit.overall}점`)}"><span class="sr">${esc(r.name)}</span></button>`).join('')}</div>
+        <div class="col-head"><b>${head[col.key]}</b><span class="cnt" data-n="${col.n}">${col.n}</span>명</div>
+        <div class="col-sub">${col.label}</div>
+        <div class="cards">${list.map((r) => {
+        const t = r.audit.danger[0] || [...r.audit.caution].filter((i) => i.type !== 'style').sort((x, y) => y.gain - x.gain)[0];
+        const why = t ? (t.type === 'forbidden' ? t.titles.join('·') : t.label) : '기준 통과';
+        return `<button class="stu-card ${col.key}" type="button" data-act="open-single" data-id="${esc(r.id)}"
+            title="${esc(`${r.id} ${r.name} · ${r.audit.overall}점 · ${why}`)}">
+            <span class="sc-name">${esc(r.name)}</span>
+            <span class="sc-meta">${esc(r.id)}<b>${r.audit.overall}</b></span>
+            <span class="sc-why">${esc(why)}</span>
+          </button>`;
+      }).join('')}</div>
       </div>`;
     }).join('')}</div>`;
   }
@@ -1022,13 +1038,11 @@
         <div class="er-head">
           <div>
             <span class="pill-badge">세특 응급실</span>
-            <h2 style="font-size:24px;margin-top:10px">${esc(C.title)} 생기부 건강도</h2>
-            <div class="row" style="gap:18px;margin-top:8px">${gaugeHtml(c.health, r0 && r0.health !== c.health ? r0.health : null, '학급 건강도')}
-              <div class="muted small">학급 전체 세특을 같은 기준으로 채점한 평균입니다.<br>아래 세 칸은 학생 한 명이 칩 하나입니다.</div></div>
+            <h2 style="font-size:26px;margin-top:10px">${esc(C.title)} — 학생별 분류</h2>
+            <div class="muted small" style="margin-top:6px">카드를 누르면 그 학생의 세특을 바로 엽니다.
+              <span class="faint">· 학생 ${c.stats.students}명 · 평균 ${c.health}점 · 예상 수정시간 약 ${c.estMinutes}분</span></div>
           </div>
-          <div class="stack" style="text-align:right">
-            <div class="muted small">예상 수정시간</div><div class="display-num">약 ${c.estMinutes}분</div>
-          </div>
+          <div class="deck" aria-hidden="true"><span class="deck-n">${c.stats.students}</span><small>명 감사</small></div>
         </div>
         ${triageHtml(c)}
         <div class="row" style="margin-top:18px">

@@ -54,7 +54,7 @@
   /* ───────────── ① 개별 감사: 읽기 → 형광펜 → 결과 공개 ───────────── */
 
   /**
-   * 1단계 기록을 문장 단위로 읽어 내려가고, 문장을 다 읽은 자리에 형광펜을 긋는다.
+   * 1단계 어절을 하나씩 읽어 내려가다가, 형광펜 구절에 이르면 그 자리에서 긋는다.
    * 2단계 다 읽고 나서야 점수·판정·검사 항목을 공개한다.
    */
   function scanSingle(report, audit) {
@@ -64,23 +64,25 @@
     const scoreEl = report.querySelector('.sv'); // 게이지 한가운데 숫자
     const stampBox = report.querySelector('.stamp-box');
     const doc = report.querySelector('.doc');
-    const sents = (audit.sentences || []).map((_, k) => [...report.querySelectorAll(`[data-si="${k}"]`)]);
+    const units = [...report.querySelectorAll('[data-ri]')]
+      .sort((a, b) => Number(a.dataset.ri) - Number(b.dataset.ri));
 
     const final = () => {
       report.classList.remove('reading', 'revealing');
       marks.forEach((m) => m.classList.add('painted'));
       logs.forEach((l) => l.classList.add('on'));
-      report.querySelectorAll('[data-si]').forEach((el) => el.classList.remove('reading', 'read'));
+      units.forEach((el) => el.classList.remove('reading', 'read'));
       if (scoreEl) scoreEl.textContent = String(audit.overall);
       if (stampBox) stampBox.classList.add('pop');
     };
-    if (reduced() || !doc || !sents.length) { final(); return; }
+    if (reduced() || !doc || !units.length) { final(); return; }
 
     report.classList.add('reading');
     if (scoreEl) scoreEl.textContent = '0';
 
     const bar = report.querySelector('.rh-bar > i');
     const idx = report.querySelector('.rh-i');
+    const foundBox = report.querySelector('.rh-found');
     const redEl = report.querySelector('.rh-red b');
     const amberEl = report.querySelector('.rh-amber b');
     const setCount = (el, name, n) => {
@@ -89,51 +91,67 @@
       el.parentElement.classList.toggle('zero', !n);
     };
 
-    // 문장마다 읽는 시간을 글자 수에 맞추되, 전체가 길어지면 함께 줄인다
-    const raw = sents.map((_, k) => {
-      const t = audit.sentences[k].text.length;
-      return Math.max(200, Math.min(560, 26 + t * 13));
+    // 읽는 데 걸리는 시간: 어절은 글자 수에, 형광펜 구절은 조금 더 길게
+    const cost = units.map((el) => {
+      const len = (el.textContent || '').trim().length;
+      if (el.tagName === 'MARK') return 230 + Math.min(180, len * 10);
+      return Math.max(40, Math.min(150, 26 + len * 19)) + (/[.!?]$/.test(el.textContent.trim()) ? 70 : 0);
     });
-    const total = raw.reduce((a, b) => a + b, 0);
-    const scale = total > 2400 ? 2400 / total : 1;
-    const dur = raw.map((x) => x * scale);
+    const total = cost.reduce((a, b) => a + b, 0);
+    const BUDGET = 3000;
+    const scale = total > BUDGET ? BUDGET / total : 1;
 
     const steps = [];
-    let at = 60;
+    let at = 80;
     let red = 0;
     let amber = 0;
-    sents.forEach((els, k) => {
-      const startAt = at;
+    let lastSent = -1;
+    units.forEach((el, k) => {
+      const dur = cost[k] * scale;
       steps.push({
-        at: startAt,
+        at,
         run: () => {
-          els.forEach((el) => el.classList.add('reading'));
-          if (idx) idx.textContent = String(k + 1);
-          if (bar) bar.style.width = `${Math.round(((k + 1) / sents.length) * 100)}%`;
+          if (k) units[k - 1].classList.remove('reading');
+          el.classList.add('reading');
+          const si = Number(el.dataset.si);
+          if (!Number.isNaN(si) && si !== lastSent) {
+            lastSent = si;
+            if (idx) idx.textContent = String(si + 1);
+          }
+          if (bar) bar.style.width = `${Math.round(((k + 1) / units.length) * 100)}%`;
         },
       });
-      at += dur[k];
-      steps.push({
-        at, // 문장을 다 읽은 순간 그 문장의 형광펜이 그어진다
-        run: () => {
-          els.forEach((el) => { el.classList.remove('reading'); el.classList.add('read'); });
-          els.filter((el) => el.tagName === 'MARK').forEach((m) => {
-            m.classList.add('painted');
-            if (m.classList.contains('red')) setCount(redEl, '위험', ++red); else setCount(amberEl, '주의', ++amber);
-          });
-        },
-      });
+      if (el.tagName === 'MARK') {
+        // 구절을 다 읽은 순간 형광펜이 그어지고, 무엇을 찾았는지 적힌다
+        steps.push({
+          at: at + dur * 0.55,
+          run: () => {
+            el.classList.add('painted');
+            const red2 = el.classList.contains('red');
+            if (red2) setCount(redEl, '위험', ++red); else setCount(amberEl, '주의', ++amber);
+            if (foundBox) {
+              const chip = document.createElement('span');
+              chip.className = `found ${red2 ? 'red' : 'amber'}`;
+              chip.textContent = `${el.dataset.kind} · ${el.dataset.name}`;
+              foundBox.appendChild(chip);
+              while (foundBox.children.length > 4) foundBox.removeChild(foundBox.firstChild);
+            }
+          },
+        });
+      }
+      steps.push({ at: at + dur, run: () => { el.classList.remove('reading'); el.classList.add('read'); } });
+      at += dur;
     });
 
     // 2단계: 결과 공개
-    const revealAt = at + 260;
+    const revealAt = at + 300;
     let stopCount = () => {};
     steps.push({
       at: revealAt,
       run: () => {
         report.classList.remove('reading');
         report.classList.add('revealing');
-        report.querySelectorAll('[data-si]').forEach((el) => el.classList.remove('read'));
+        units.forEach((el) => el.classList.remove('read', 'reading'));
         stopCount = countTo(scoreEl, 0, audit.overall, 700);
         logs.forEach((l, i) => setTimeout(() => l.classList.add('on'), 120 + i * 70));
       },
@@ -143,35 +161,52 @@
     play(steps, () => { stopCount(); final(); }, revealAt + 1150);
   }
 
-  /* ───────────── ② 학급 감사: 30명이 세 칸으로 갈라지는 장면 ───────────── */
+  /* ───────────── ② 학급 감사: 학생 카드가 세 칸으로 날아가 꽂힌다 ───────────── */
 
   function sortClass(scope) {
     if (!scope) return;
-    const chips = [...scope.querySelectorAll('.triage-chip')];
+    const cards = [...scope.querySelectorAll('.stu-card')];
     const nums = [...scope.querySelectorAll('.triage-col .cnt')];
     const finals = nums.map((n) => Number(n.dataset.n || n.textContent) || 0);
+    const deck = document.querySelector('.deck');
+    const deckN = document.querySelector('.deck-n');
 
     const final = () => {
       scope.classList.remove('sorting');
-      chips.forEach((c) => c.classList.add('landed'));
+      cards.forEach((c) => { c.classList.add('landed'); c.style.removeProperty('--dx'); c.style.removeProperty('--dy'); });
       nums.forEach((n, i) => { n.textContent = String(finals[i]); });
+      if (deckN) deckN.textContent = String(cards.length);
     };
-    if (reduced() || !chips.length) { final(); return; }
+    if (reduced() || !cards.length) { final(); return; }
 
     scope.classList.add('sorting');
     nums.forEach((n) => { n.textContent = '0'; });
 
-    const SPAN = 900;
-    const steps = chips.map((c, i) => ({
-      at: 60 + (i / Math.max(1, chips.length)) * SPAN,
-      run: () => c.classList.add('landed'),
-    }));
-    const stops = [];
-    steps.push({
-      at: 120,
-      run: () => nums.forEach((n, i) => stops.push(countTo(n, 0, finals[i], SPAN))),
+    // 카드마다 ‘대기 더미 → 제 칸’ 이동 거리를 미리 재 둔다
+    const from = deck ? deck.getBoundingClientRect() : { left: window.innerWidth / 2, top: 0, width: 108, height: 74 };
+    cards.forEach((c, i) => {
+      const r = c.getBoundingClientRect();
+      c.style.setProperty('--dx', `${Math.round(from.left + from.width / 2 - (r.left + r.width / 2))}px`);
+      c.style.setProperty('--dy', `${Math.round(from.top + from.height / 2 - (r.top + r.height / 2))}px`);
+      c.style.setProperty('--rot', `${(i % 2 ? 1 : -1) * (4 + (i % 5) * 2)}deg`);
     });
-    play(steps, () => { stops.forEach((s) => s()); final(); }, SPAN + 420);
+
+    // 학번 순으로 날아가야 세 칸으로 갈라지는 게 보인다
+    const order = [...cards].sort((a, b) => String(a.dataset.id).localeCompare(String(b.dataset.id)));
+    const GAP = cards.length > 24 ? 46 : cards.length > 12 ? 62 : 90;
+    const landed = [0, 0, 0];
+    const colOf = (c) => (c.classList.contains('red') ? 0 : c.classList.contains('amber') ? 1 : 2);
+    const steps = order.map((c, i) => ({
+      at: 120 + i * GAP,
+      run: () => {
+        c.classList.add('landed');
+        const k = colOf(c);
+        landed[k] += 1;
+        if (nums[k]) nums[k].textContent = String(landed[k]);
+        if (deckN) deckN.textContent = String(cards.length - i - 1);
+      },
+    }));
+    play(steps, final, 120 + cards.length * GAP + 620);
   }
 
   SA.stage = { scanSingle, sortClass, stop, reduced };
