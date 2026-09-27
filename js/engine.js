@@ -1068,7 +1068,10 @@
       const rep = (answer.replacement || issue.replacement || '').trim();
       if (!rep) return res;
       let after = text.slice(idx + issue.text.length);
-      const pm = after.match(/^(으로|로|을|를|이|가|은|는|과|와)/);
+      // 낱말 전체를 바꿀 때만 뒤따르는 조사를 맞춘다.
+      // 맞춤법 교정처럼 낱말 일부만 바뀌는 경우(어의없+는)에는 건드리지 않는다.
+      const spelling = (issue.hits || []).some((h) => h.rule === 'typo');
+      const pm = !spelling && after.match(/^(으로|로|을|를|이|가|은|는|과|와)(?=\s|$|[.,])/);
       let replacement = rep;
       if (pm) {
         const pair = { 을: '을/를', 를: '을/를', 이: '이/가', 가: '이/가', 은: '은/는', 는: '은/는', 과: '과/와', 와: '과/와', 으로: '으로/로', 로: '으로/로' }[pm[1]];

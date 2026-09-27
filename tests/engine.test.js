@@ -346,3 +346,25 @@ test('미래 예측 · 인성 단정 · 개념 비약은 주의로 잡는다', (
     assert.doesNotMatch(q.prompt, /명사형 어미/);
   });
 });
+
+test('맞춤법 사전은 넓게, 오탐은 없게', () => {
+  const wrong = {
+    '깊히 이해함.': '깊이', '있슴.': '있음', '역활을 맡음.': '역할', '맏아 진행함.': '맡아',
+    '리더쉽을 보임.': '리더십', '됬음.': '됐', '몇일 동안 조사함.': '며칠', '꼼꼼이 정리함.': '꼼꼼히',
+    '할수 있는 일을 찾음.': '할 수', '어의없는 실수를 함.': '어이없', '뿐만아니라 발표함.': '뿐만 아니라',
+    '오랫만에 발표함.': '오랜만', '설레임을 표현함.': '설렘', '금새 이해함.': '금세',
+    '하는것을 정리함.': '하는 것', '않하고 넘어감.': '안 하', '워크샵에 참여함.': '워크숍',
+  };
+  for (const [text, fix] of Object.entries(wrong)) {
+    const a = E.audit(text);
+    const t = a.danger.find((i) => i.titles.includes('맞춤법·어휘 오류'));
+    assert.ok(t, `못 잡음: ${text}`);
+    assert.ok(t.replacements.includes(fix) || E.applyAnswer(text, t, { kind: 'replace' }).text.includes(fix), `교정 실패: ${text}`);
+  }
+  // 바른 표기는 건드리지 않는다
+  ['노력할수록 실력이 늘어남을 확인함.', '대구지역 사례를 조사함.', '색이 바램을 관찰함.',
+    '산성비의 영향을 조사하여 그래프로 정리함.', '한 번 더 계산하여 오차를 줄임.',
+  ].forEach((t) => assert.equal(E.audit(t).danger.length, 0, `오탐: ${t}`));
+  // 자모만 남은 글자도 잡는다
+  assert.ok(E.audit('발표를 잘 마무리ㅎ함.').danger.some((i) => i.titles.includes('맞춤법·어휘 오류')));
+});
