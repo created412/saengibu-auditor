@@ -467,6 +467,17 @@
   }
 
   /** 형광펜을 클릭했을 때 그 자리에 열리는 안내·처방 풍선 */
+  /** 풍선을 열자마자 보이는 대체 문장 — 누르면 고쳐 쓰기 칸에 들어간다 */
+  function quickFixHtml(issue, q) {
+    const list = [...(q.suggestions || []), ...(q.templates || [])].filter(Boolean).slice(0, 3);
+    if (!list.length || !(q.targets || []).length) return '';
+    return `<div class="quickfix">
+      <div class="qf-label">${issue.grade === 'danger' ? '금지 사실은 빼고, 이렇게 바꿔 보세요' : '이렇게 바꿔 보세요'}</div>
+      ${list.map((t, k) => `<button class="qf" type="button" data-act="quick-fix" data-sig="${esc(issue.signature)}" data-k="${k}">${esc(t)}</button>`).join('')}
+      <div class="faint small">누르면 아래 ‘고쳐 쓰기’ 칸에 들어갑니다 · 〔 〕는 실제 내용으로 바꿔 주세요</div>
+    </div>`;
+  }
+
   function popoverHtml(issue) {
     const q = E.buildQuestion(issue, S.audit, { sources: S.source });
     const action = S.panel.action;
@@ -479,6 +490,7 @@
         ${refs.map((r) => `<span class="ref">기재요령 ${esc(r)}</span>`).join('')}</div>
       ${issue.global ? '' : `<div class="pop-quote">“${esc(issue.mode === 'replace' ? issue.matches.join('’, ‘') : issue.text)}”</div>`}
       <div class="pop-why">${esc(issue.why)}</div>
+      ${q.mode === 'info' || action === 'rewrite' ? '' : quickFixHtml(issue, q)}
       ${q.mode === 'info' ? '<div class="small muted" style="margin-top:8px">아래 ‘직접 편집’으로 분량을 줄여 주세요. 줄이면 이 표시가 사라집니다.</div>' : `
       <div class="rx-label">${danger ? '🚨 바로 수정 — 기재 금지' : '💊 3초 처방'}</div>
       <div class="rx-actions">${q.actions.map((act) => `<button class="btn ${action === act ? 'on' : ''}" type="button" data-act="rx" data-sig="${esc(issue.signature)}" data-action="${act}" ${act === 'source' && !S.source ? 'title="원자료를 넣으면 사용할 수 있습니다"' : ''}>${esc(actionLabel(issue, act))}</button>`).join('')}</div>
@@ -1203,7 +1215,12 @@
     if (issue.grade !== 'danger' && q.targets && q.targets.length && !d.none) {
       const made = (d.cFinding || '').trim() ? E.composeSentence({ topic: d.cTopic, basis: d.cBasis, finding: d.cFinding }) : '';
       const p = q.parts || {};
-      rewriteBlock = `<details class="rw" ${d.rewrite || made ? 'open' : ''}>
+      const quick = (q.suggestions || []).slice(0, 2);
+      rewriteBlock = `${quick.length && !d.rewrite && !made ? `<div class="quickfix">
+        <div class="qf-label">이렇게 바꿔 보세요 <span class="faint">— 누르면 고쳐 쓰기 칸에 들어갑니다</span></div>
+        ${quick.map((t, j) => `<button class="qf" type="button" data-act="c-sugg" data-sig="${sig}" data-k="${j}">${esc(t)}</button>`).join('')}
+      </div>` : ''}
+      <details class="rw" ${d.rewrite || made ? 'open' : ''}>
         <summary>✎ 이 문장 고쳐 쓰기 — 뒤에 덧붙이지 않고 그 자리를 바꿉니다</summary>
         <div class="small muted" style="margin:6px 0">원문: “${esc(q.targets[0])}”</div>
         ${(q.suggestions || []).length ? `<div class="tpl-label">${issue.grade === 'danger' ? '금지 사실은 빼고 쓸 수 있는 문장' : '이 문장의 조각으로 만든 대체 문장'}</div>
@@ -1480,6 +1497,24 @@
           if (box.top < 90 || box.bottom > window.innerHeight - 260) mark.scrollIntoView({ behavior: 'smooth', block: 'center' });
         }
         requestAnimationFrame(positionPopover);
+        break;
+      }
+      case 'quick-fix': { // 대체 문장을 고르면 곧바로 고쳐 쓰기 칸으로
+        const issue = currentIssue(sig);
+        const q = E.buildQuestion(issue, S.audit, { sources: S.source });
+        const list = [...(q.suggestions || []), ...(q.templates || [])].filter(Boolean).slice(0, 3);
+        const d = draftFor(sig);
+        d.rewrite = list[Number(el.dataset.k)] || '';
+        d.target = (q.targets || [])[0] || '';
+        S.panel = { sig, action: 'rewrite' };
+        render();
+        requestAnimationFrame(() => {
+          const ta = document.querySelector('[data-input="draft-rewrite"]');
+          if (!ta) return;
+          ta.focus();
+          const at = ta.value.indexOf('〔');
+          if (at >= 0) ta.setSelectionRange(at, ta.value.indexOf('〕', at) + 1);
+        });
         break;
       }
       case 'rx': {

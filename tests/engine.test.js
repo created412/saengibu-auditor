@@ -388,3 +388,20 @@ test('기재 금지에도 대체 문장을 준다 (금지 사실은 재료로 �
     q.suggestions.forEach((s) => assert.ok(!/대회|수상|검정시험|성적|홀랜드|서울대/.test(s), `금지어 재사용: ${s}`));
   }
 });
+
+test('대체 문장에는 지적당한 말과 금지어를 다시 쓰지 않는다', () => {
+  const t = '교내 역사토론대회에서 최우수상을 수상하는 등 대학 수준의 탁월한 역사 인식을 보여줌. 의열단에 대해 매우 깊이 있게 탐구함.';
+  const a = E.audit(t);
+  const banned = /대회|최우수상|수상|대학 수준|탁월한|매우/;
+  a.issues.forEach((i) => {
+    const q = E.buildQuestion(i, a);
+    (q.suggestions || []).forEach((sgt) => {
+      // 삭제 결과(원문에서 지운 안)는 예외 — 나머지 제안에는 금지어·지적어가 없어야 한다
+      if (sgt.includes('〔')) assert.ok(!banned.test(sgt), `재사용: ${sgt}`);
+      assert.doesNotMatch(sgt, /undefined/);
+    });
+  });
+  // 남은 구체어로 문장을 세운다
+  const vague = a.issues.find((i) => i.type === 'vague');
+  assert.ok(E.buildQuestion(vague, a).suggestions.some((s) => s.includes('의열단')));
+});
