@@ -19,6 +19,9 @@
     source: { label: '원자료 근거 불명', criterion: 'exag', grade: 'caution', ref: '19쪽 5-가' },
     vague: { label: '추상적 표현', criterion: 'specific', grade: 'caution', ref: '95쪽' },
     exag: { label: '과장 표현', criterion: 'exag', grade: 'caution', ref: '19쪽 5-가' },
+    future: { label: '근거 없는 미래 예측', criterion: 'exag', grade: 'caution', ref: '19쪽 5-가 · 95쪽' },
+    personality: { label: '주관적 인성 평가', criterion: 'evidence', grade: 'caution', ref: '95쪽 · 117쪽 가' },
+    leap: { label: '교과 개념 비약 · 과장 의심', criterion: 'exag', grade: 'caution', ref: '19쪽 5-가' },
     cliche: { label: '상투 표현', criterion: 'dup', grade: 'caution', ref: '95쪽' },
     style: { label: '명사형 종결', criterion: null, grade: 'caution', ref: '30쪽' },
     symbol: { label: '특수문자·번호', criterion: null, grade: 'caution', ref: '30쪽' },
@@ -285,10 +288,15 @@
         const s = sentenceAt(sentences, start);
         const prev = sentences[s.index - 1];
         const own = s.clauses.filter((c) => c.abs + c.text.length <= start || c.abs >= end).filter((c) => c.type !== '평가');
-        let best = Math.max(0, ...own.map((c) => c.strength));
+        // 근거로 인정하려면 그 절에 ‘무엇을’에 해당하는 구체어가 있어야 한다
+        // (‘맨 앞자리에 앉아 듣는’ 같은 일반적 태도는 ‘능력이 뛰어나다’의 근거가 되지 못한다)
+        const ACT = new RegExp(lex.ACT_VERBS.source);
+        const THINK = new RegExp(lex.THINK_VERBS.source);
+        const strong = (c) => (specificStems(c.text).length && (ACT.test(c.text) || THINK.test(c.text)) ? c.strength : 0);
+        let best = Math.max(0, ...own.map(strong));
         // 사고력 평가만 바로 앞 문장의 근거를 이어받는다. '모범이 됨' 같은 태도 평가는 그 문장 안에 장면이 있어야 함
-        if (prev && p.cat === 'thinking') best = Math.max(best, ...prev.clauses.filter((c) => c.type !== '평가').map((c) => c.strength * 0.8));
-        if (best >= 4) continue;
+        if (prev && p.cat === 'thinking') best = Math.max(best, ...prev.clauses.filter((c) => c.type === '사고').map((c) => strong(c) * 0.8));
+        if (best >= 5) continue;
         push('evidence', start, end, {
           cat: p.cat, deleteMode: p.deleteMode, penalty: p.cat === 'thinking' ? 30 : 20,
           why: p.cat === 'thinking'
@@ -344,6 +352,48 @@
         if (overlaps(taken(), idx, idx + w.length)) continue;
         push('exag', idx, idx + w.length, { penalty: 12, why: '실제 결과물로 확인하기 어려운 강조 표현입니다. 사실만 남기면 기록의 신뢰도가 올라갑니다.' });
       }
+    }
+
+    // ④-2 근거 없는 미래 예측 · 주관적 인성 평가
+    const cautionTaken = () => issues.filter((i) => i.grade !== 'danger').map((i) => [i.start, i.end]);
+    for (const re of lex.FUTURE_PATTERNS) {
+      re.lastIndex = 0;
+      let m;
+      while ((m = re.exec(text))) {
+        if (!m[0].trim()) { re.lastIndex++; continue; }
+        const start = m.index;
+        const end = m.index + m[0].trimEnd().length;
+        if (overlaps(cautionTaken(), start, end)) continue;
+        push('future', start, end, { penalty: 14, deleteMode: 'tail',
+          why: '관찰된 사실이 아니라 앞날에 대한 전망입니다. 학생이 실제로 한 일로 바꾸어 적어 주세요.' });
+      }
+    }
+    for (const re of lex.PERSONALITY_PATTERNS) {
+      re.lastIndex = 0;
+      let m;
+      while ((m = re.exec(text))) {
+        if (!m[0].trim()) { re.lastIndex++; continue; }
+        const start = m.index;
+        const end = m.index + m[0].trimEnd().length;
+        if (overlaps(cautionTaken(), start, end)) continue;
+        push('personality', start, end, { penalty: 12, deleteMode: 'phrase',
+          why: '성품을 단정하는 표현입니다. 그렇게 판단한 장면(무엇을 했는지)으로 바꾸면 같은 인상을 더 분명히 전할 수 있습니다.' });
+      }
+    }
+
+    // ④-3 교과 개념 비약 — 고급 개념을 ‘스스로 깨우쳤다’고만 적은 경우
+    for (const sent of sentences) {
+      lex.ADVANCED_CONCEPTS.lastIndex = 0;
+      const hit = lex.ADVANCED_CONCEPTS.exec(sent.text);
+      if (!hit) continue;
+      if (!lex.LEAP_TRIGGERS.test(sent.text)) continue;
+      // 그 문장에 실제로 무엇을 어떻게 했는지(자료·계산·풀이)가 있으면 비약으로 보지 않는다
+      if (/자료|실험|그래프|계산|풀이|문제를|측정|비교하|그려|구하|구해|증명|유도|코드|모형/.test(sent.text)) continue;
+      const start = sent.start + hit.index;
+      const end = start + hit[0].length;
+      if (overlaps(cautionTaken(), start, end)) continue;
+      push('leap', start, end, { penalty: 22, deleteMode: 'tail',
+        why: `‘${hit[0]}’을 스스로 깨우쳤다고만 적혀 있고, 무엇을 어떻게 해서 알게 되었는지가 없습니다. 근거가 없으면 과장·허위 서술로 읽힙니다.` });
     }
 
     // ⑤ 상투 표현 (긴 표현부터, 겹치면 생략)
@@ -809,6 +859,39 @@
           ],
           actions: ['delete', 'keep'],
         };
+      case 'future':
+        return {
+          ...q,
+          prompt: `‘${issue.text}’${ko.josa(issue.text, '은/는').slice(issue.text.length)} 앞날에 대한 전망입니다. 그렇게 본 근거가 된 학생의 행동이 있었나요?`,
+          mode: 'choice',
+          choices: [
+            { label: '이 예측 문장 지우기', answer: { kind: 'delete' }, primary: true },
+            { label: '근거가 된 행동을 대신 쓰기', answer: { kind: 'rewriteSentence' } },
+          ],
+          actions: ['delete', 'rewrite', 'compose'],
+        };
+      case 'personality':
+        return {
+          ...q,
+          prompt: `‘${issue.text}’${ko.josa(issue.text, '이라고/라고').slice(issue.text.length)} 판단한 장면이 있었나요? 성품 대신 그 장면을 적으면 더 분명해집니다.`,
+          mode: 'choice',
+          choices: [
+            { label: '그 장면으로 고쳐 쓰기', answer: { kind: 'rewriteSentence' }, primary: true },
+            { label: '이 표현 지우기', answer: { kind: 'delete' } },
+          ],
+          actions: ['rewrite', 'compose', 'delete'],
+        };
+      case 'leap':
+        return {
+          ...q,
+          prompt: `‘${issue.text}’${ko.josa(issue.text, '을/를').slice(issue.text.length)} 어떻게 알게 되었는지가 빠져 있습니다. 무엇을 하다가 거기까지 갔나요?`,
+          mode: 'choice',
+          choices: [
+            { label: '탐구 과정을 넣어 고쳐 쓰기', answer: { kind: 'rewriteSentence' }, primary: true },
+            { label: '확인되지 않음 → 이 문장 지우기', answer: { kind: 'delete' } },
+          ],
+          actions: ['rewrite', 'compose', 'delete'],
+        };
       case 'source':
         return {
           ...q,
@@ -1073,7 +1156,7 @@
     return res;
   }
 
-  const APPLY_ORDER = { forbidden: 0, symbol: 1, exag: 1, cliche: 2, vague: 2, knowledge: 3, selfvoice: 3, source: 4, evidence: 5, style: 6, listing: 7, growth: 7, overflow: 8 };
+  const APPLY_ORDER = { forbidden: 0, symbol: 1, exag: 1, future: 2, personality: 2, leap: 2, cliche: 2, vague: 2, knowledge: 3, selfvoice: 3, source: 4, evidence: 5, style: 6, listing: 7, growth: 7, overflow: 8 };
 
   /**
    * 한 학생의 여러 응답을 한꺼번에 적용. 지우는 처방 먼저, 문장을 닫거나 사실을 덧붙이는 처방은 나중에.

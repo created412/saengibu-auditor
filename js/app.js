@@ -776,6 +776,7 @@
       { label: '역량의 근거', ...mark(n(['evidence'])) },
       { label: '구체성 · 과장 · 상투 표현', ...mark(n(['vague', 'exag', 'cliche'])) },
       { label: '지식 서술 · 소감 어투 · 나열', ...mark(n(['knowledge', 'selfvoice', 'listing', 'growth'])) },
+      { label: '미래 예측 · 인성 단정 · 개념 비약', ...mark(n(['future', 'personality', 'leap'])) },
       { label: '명사형 종결 · 기호 표기', ...mark(n(['style', 'symbol'])) },
     ];
   }

@@ -304,3 +304,45 @@ test('〔 〕를 지우든 남겨 두든 똑같이 적용된다', () => {
   assert.doesNotMatch(r1.text, /〔|〕/);
   assert.ok(E.guard(t, r1.text, r1.facts).ok, 'AI 임의 추가로 잡히면 안 됨');
 });
+
+test('맞춤법·어휘 오류는 위험으로 잡고 바른 표기를 제시한다', () => {
+  const t = '경찰관이라는 직업에 대해 깊히 이해하는 시간을 가짐. 청소 시간에 궃은 일을 도맡아 하며 숨은 리더쉽을 발휘함. 맡은 역활을 끝까지 해냄.';
+  const a = E.audit(t);
+  const typos = a.danger.filter((i) => i.titles.includes('맞춤법·어휘 오류'));
+  assert.ok(typos.length >= 3, `맞춤법 지적 ${typos.length}건`);
+  assert.equal(E.verdict(a).stamp, '위험');
+  let text = t;
+  for (const i of a.danger.filter((x) => x.mode === 'replace')) text = E.applyAnswer(text, i, { kind: 'replace' }).text;
+  assert.match(text, /깊이 이해/);
+  assert.match(text, /궂은 일/);
+  assert.match(text, /리더십/);
+  assert.match(text, /역할/);
+});
+
+test('성적·석차와 심리검사 결과는 기재 금지', () => {
+  const score = E.audit('수학 성적이 아주 높은 편은 아니지만 꾸준히 노력함. 학급이 3등을 차지하는 데 큰 역할을 함.');
+  assert.ok(score.danger.some((i) => i.titles.includes('성적·석차 언급')));
+  const test1 = E.audit('홀랜드 직업적성검사에서 예술형(A)이 높게 나와 미술 분야에 관심이 많다는 것을 알게 됨.');
+  assert.ok(test1.danger.some((i) => i.titles.includes('심리·적성검사 결과')));
+  // 교과 내용 속 등급·순위는 잡지 않는다
+  assert.equal(E.audit('지진 규모와 진도 등급의 차이를 자료로 비교하여 설명함.').danger.length, 0);
+});
+
+test('미래 예측 · 인성 단정 · 개념 비약은 주의로 잡는다', () => {
+  const f = E.audit('여러 방면으로 호기심이 많아 앞으로 훌륭한 인재가 될 것으로 기대됨.');
+  assert.ok(f.caution.some((i) => i.type === 'future'), '미래 예측');
+  const p = E.audit('매사에 성실하고 착해서 친구들과 잘 어울림.');
+  assert.ok(p.caution.some((i) => i.type === 'personality'), '인성 단정');
+  const l = E.audit('피타고라스의 정리를 배우면서 미적분의 기초 원리를 스스로 깨우치고 이를 실생활에 적용하려는 자세를 보임.');
+  assert.ok(l.caution.some((i) => i.type === 'leap'), '개념 비약');
+  // 실제 탐구 과정이 있으면 비약으로 보지 않는다
+  const ok = E.audit('함수의 극한을 배우며 순간변화율의 의미를 구간을 좁혀 가는 계산으로 확인하고, 미적분의 기본정리를 넓이 그래프로 설명함.');
+  assert.ok(!ok.caution.some((i) => i.type === 'leap'));
+  // 처방 질문이 제대로 붙는다
+  [f, p, l].forEach((a) => {
+    const i = a.caution.find((x) => ['future', 'personality', 'leap'].includes(x.type));
+    const q = E.buildQuestion(i, a);
+    assert.ok(q.prompt && q.actions.length, `${i.type} 처방 없음`);
+    assert.doesNotMatch(q.prompt, /명사형 어미/);
+  });
+});
