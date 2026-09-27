@@ -1441,6 +1441,13 @@
       }
       case 'card-close':
         closeCard(); break;
+      case 'go-home': // 왼쪽 위 집 모양 — 개별 감사 첫 화면으로 (작업 내용은 사례로 보존)
+        ev.preventDefault();
+        stage.stop();
+        S.stage = 'input'; S.panel = null; S.editing = false; saveCase();
+        if (location.hash !== '#single') location.hash = '#single'; else render();
+        window.scrollTo({ top: 0 });
+        break;
       case 'single-new':
         S.stage = 'input'; S.panel = null; saveCase(); render(); break;
       case 'case-prev':

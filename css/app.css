@@ -674,3 +674,8 @@ table.students .num { font-variant-numeric: tabular-nums; font-weight: 700; }
 .found.red { background: var(--red-bg); color: var(--red); }
 .found.amber { background: var(--amber-bg); color: var(--amber); }
 @keyframes found-in { from { opacity: 0; transform: translateY(-6px) scale(.9); } to { opacity: 1; transform: none; } }
+
+/* 집 모양 = 처음 화면으로 */
+.brand { border-radius: 12px; padding: 2px 6px; margin-left: -6px; transition: background .12s; }
+.brand:hover { background: var(--card); }
+.brand:hover .brand-name { color: var(--blue-deep); }
