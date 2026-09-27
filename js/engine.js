@@ -648,7 +648,13 @@
    * 교사만 아는 부분(근거·결론)만 〔 〕로 남긴다.
    */
   function rebuildSuggestions(issue, sentenceText) {
-    const f = fragments(sentenceText);
+    // 기재 금지 구절은 재료로 쓰지 않는다 — 지운 뒤 남은 말로만 문장을 세운다
+    let src = sentenceText;
+    if (issue.type === 'forbidden') {
+      (issue.matches || []).forEach((w) => { src = src.split(w).join(' '); });
+      (issue.hits || []).forEach((h) => { if (h.word) src = src.split(h.word).join(' '); });
+    }
+    const f = fragments(src);
     const O = (x, pair) => (x ? ko.josa(x, pair) : '');
     const out = [];
     const 대상 = f.topic;
@@ -669,6 +675,13 @@
     } else if (issue.type === 'selfvoice') {
       out.push(`${대상 ? `${O(대상, '에서')} ` : ''}〔학생이 한 말·행동〕을 보임`);
       out.push(`〔장면〕에서 〔학생의 판단〕이라고 설명함`);
+    } else if (issue.type === 'forbidden') {
+      // 금지 사실을 뺀 자리에 쓸 수 있는 문장 — 유형별 틀 + 원문에 남은 대상
+      const kinds = [...new Set((issue.hits || []).map((h) => h.rule))];
+      kinds.forEach((k) => (lex.FORBIDDEN_TEMPLATES[k] || []).forEach((t) => out.push(t)));
+      if (!out.length) out.push(...lex.FORBIDDEN_TEMPLATES.default);
+      // 원문 조각은 금지 구절과 붙어 있어 재료로 쓰기 어렵다. 따옴표 안 제목만 되살린다
+      if (f.quoted[0]) out.unshift(`‘${f.quoted[0]}’에서 〔확인한 내용〕을 찾아 〔판단〕을 밝힘`);
     } else if (issue.type === 'listing' || issue.type === 'growth') {
       if (대상) out.push(`${O(대상, '에서')} 〔발견한 것〕을 찾아 〔판단·결론〕을 제시함`);
       if (issue.type === 'growth') out.push(`처음에는 〔처음 생각〕이었으나 ${자료 ? `${O(자료, '을/를')} ` : '〔근거〕를 '}확인한 뒤 〔바뀐 판단〕으로 수정함`);

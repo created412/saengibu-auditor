@@ -420,7 +420,7 @@
           <div class="orig-line">원문: ${esc(picked)}</div>
           ${targets.length > 1 ? `<button class="btn btn-sm btn-ghost" type="button" data-act="pick-target" data-sig="${sig}" data-k="-1">다른 문장 고르기</button>` : ''}
           <textarea id="rw-${sig.length}" rows="3" data-input="draft-rewrite" data-sig="${sig}" placeholder="${esc(picked)}">${esc(d.rewrite != null && d.rewrite !== '' ? d.rewrite : picked)}</textarea>
-          ${sugg.length ? `<div class="tpl-label" style="margin-top:8px">이 문장의 조각으로 만든 대체 문장 · 문장 틀 <span class="faint">— 누르면 위 칸에 들어갑니다</span></div>
+          ${sugg.length ? `<div class="tpl-label" style="margin-top:8px">${issue.grade === 'danger' ? '금지 사실은 빼고 쓸 수 있는 문장' : '이 문장의 조각으로 만든 대체 문장 · 문장 틀'} <span class="faint">— 누르면 위 칸에 들어갑니다</span></div>
             <div class="tpl-list">${sugg.map((t, k) => `<button class="tpl ${d.rewrite === t ? 'on' : ''}" type="button" data-act="use-rewrite" data-sig="${sig}" data-k="${k}">${esc(t)}</button>`).join('')}</div>` : ''}
           ${hasSlot(d.rewrite) ? '<div class="small" style="color:var(--amber)">〔 〕 칸을 실제 관찰 내용으로 채우면 적용할 수 있습니다.</div>' : ''}`;
       }
@@ -1206,7 +1206,7 @@
       rewriteBlock = `<details class="rw" ${d.rewrite || made ? 'open' : ''}>
         <summary>✎ 이 문장 고쳐 쓰기 — 뒤에 덧붙이지 않고 그 자리를 바꿉니다</summary>
         <div class="small muted" style="margin:6px 0">원문: “${esc(q.targets[0])}”</div>
-        ${(q.suggestions || []).length ? `<div class="tpl-label">이 문장의 조각으로 만든 대체 문장</div>
+        ${(q.suggestions || []).length ? `<div class="tpl-label">${issue.grade === 'danger' ? '금지 사실은 빼고 쓸 수 있는 문장' : '이 문장의 조각으로 만든 대체 문장'}</div>
           <div class="tpl-list">${q.suggestions.map((t, j) => `<button class="tpl ${d.rewrite === t ? 'on' : ''}" type="button" data-act="c-sugg" data-sig="${sig}" data-k="${j}">${esc(t)}</button>`).join('')}</div>` : ''}
         <input type="text" data-input="c-rewrite" data-sig="${sig}" value="${esc(d.rewrite)}" placeholder="고쳐 쓸 문장 (〔 〕 칸은 채워 주세요)">
         ${hasSlot(d.rewrite) ? '<div class="small" style="color:var(--amber);margin-top:4px">〔 〕 칸을 채우면 적용할 수 있습니다.</div>' : ''}

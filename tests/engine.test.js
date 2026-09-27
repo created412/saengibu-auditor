@@ -368,3 +368,23 @@ test('맞춤법 사전은 넓게, 오탐은 없게', () => {
   // 자모만 남은 글자도 잡는다
   assert.ok(E.audit('발표를 잘 마무리ㅎ함.').danger.some((i) => i.titles.includes('맞춤법·어휘 오류')));
 });
+
+test('기재 금지에도 대체 문장을 준다 (금지 사실은 재료로 쓰지 않는다)', () => {
+  const cases = [
+    ['교내 수학경시대회에서 최우수상을 수상하며 도형 단원의 이해도를 보여줌.', /준비하며 다룬 주제|만든 산출물/],
+    ['교외 한국사능력검정시험 1급을 취득할 정도로 역사적 지식이 해박함.', /공부한 범위|어려웠던 부분/],
+    ['수학 성적이 아주 높은 편은 아니지만 포기하지 않고 노력함.', /어려워한 단원|학습 과정에서 한 일/],
+    ['홀랜드 직업적성검사에서 예술형(A)이 높게 나와 미술에 관심이 많음을 알게 됨.', /검사 이후|관심이 생긴 분야/],
+    ['서울대학교 전공 체험 프로그램에 참여하여 생명과학의 매력을 느낌.', /프로그램 성격/],
+  ];
+  for (const [text, want] of cases) {
+    const a = E.audit(text);
+    const d = a.danger.find((i) => i.type === 'forbidden');
+    assert.ok(d, `위험 미검출: ${text}`);
+    const q = E.buildQuestion(d, a);
+    assert.ok(q.suggestions.length, `대체 문장 없음: ${text}`);
+    assert.ok(q.suggestions.some((s) => want.test(s)), `유형에 맞는 틀 없음: ${text} → ${q.suggestions.join(' / ')}`);
+    // 금지된 말이 대체 문장에 다시 섞여 들어가면 안 된다
+    q.suggestions.forEach((s) => assert.ok(!/대회|수상|검정시험|성적|홀랜드|서울대/.test(s), `금지어 재사용: ${s}`));
+  }
+});

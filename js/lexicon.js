@@ -278,6 +278,60 @@
   const ADVANCED_CONCEPTS = /미적분|미분(?:법|값)?|적분|극한|편미분|테일러|푸리에|벡터\s*해석|위상\s*수학|선형대수|양자(?:역학|화학|컴퓨팅)?|상대성\s*이론|일반\s*상대성|유전자\s*(?:가위|편집|재조합)|CRISPR|딥\s*러닝|딥러닝|인공\s*신경망|블록체인|확률\s*미분|나비에[\s·-]*스토크스|괴델|리만/g;
   const LEAP_TRIGGERS = /스스로\s*(?:깨우[치친침]|깨달|터득|알아[내낸냄]|이해)|독학|원리를\s*(?:깨우|깨달|터득)|혼자서\s*(?:터득|깨우)|자연스럽게\s*(?:이해|깨우)|금세\s*(?:이해|터득)/;
 
+
+  /**
+   * 기재 금지 사실을 뺀 자리에 무엇을 쓸 수 있는지 — 금지 유형별 문장 틀.
+   * 금지된 사실(수상·성적·시험 급수)은 빼고, 그 과정에서 학생이 실제로 한 일을 적게 한다.
+   * 학생의 사실은 교사만 아는 것이므로 〔 〕로 남긴다(프로그램이 지어내지 않는다).
+   */
+  const FORBIDDEN_TEMPLATES = {
+    contest: [
+      '〔준비하며 다룬 주제〕를 조사해 〔찾은 자료〕로 〔알게 된 것〕을 정리함',
+      '〔만든 산출물〕을 준비하며 〔선택한 방법〕과 그 이유를 설명함',
+      '〔주제〕에 대해 〔자기 주장〕을 〔근거〕를 들어 발표함',
+    ],
+    award: [
+      '〔활동에서 맡은 일〕을 하며 〔부딪힌 문제〕를 〔방법〕으로 해결함',
+      '〔결과물〕을 만들며 〔고친 점〕과 그 이유를 정리함',
+    ],
+    contestBypass: [
+      '〔행사에서 준비한 내용〕을 〔방법〕으로 정리해 발표함',
+    ],
+    cert: [
+      '〔공부한 범위〕를 〔방법〕으로 익히고 〔확인한 내용〕을 설명함',
+      '〔어려웠던 부분〕을 〔자료〕로 보완해 〔스스로 점검한 결과〕를 남김',
+    ],
+    lang: [
+      '〔읽은 원문·자료〕를 〔방법〕으로 해석하고 〔알게 된 표현·내용〕을 정리함',
+    ],
+    mock: [
+      '〔학습 내용〕에서 〔어려웠던 점〕을 〔방법〕으로 보완함',
+      '〔틀린 문제〕의 원인을 〔방법〕으로 찾아 〔고친 점〕을 정리함',
+    ],
+    score: [
+      '〔어려워한 단원〕을 〔방법〕으로 다시 공부해 〔달라진 점〕을 보임',
+      '〔학습 과정에서 한 일〕을 꾸준히 이어 가며 〔확인한 변화〕를 남김',
+    ],
+    psychTest: [
+      '검사 이후 〔실제로 찾아본 것〕을 살펴 〔알게 된 점〕을 정리함',
+      '〔관심이 생긴 분야〕에 대해 〔한 탐색 활동〕을 이어 감',
+    ],
+    univ: ['〔프로그램 성격〕에 참여해 〔알게 된 것〕을 〔이어서 한 활동〕으로 연결함'],
+    org: ['〔방문·자료 조사〕에서 〔확인한 내용〕을 〔방법〕으로 정리함'],
+    lecturer: ['〔강연 주제〕를 듣고 〔남은 질문〕을 〔방법〕으로 더 알아봄'],
+    paper: ['〔탐구 주제〕를 〔방법〕으로 살펴 〔결론〕을 정리함'],
+    book: ['〔쓴 글의 주제〕를 〔방법〕으로 구성해 〔전하려 한 것〕을 밝힘'],
+    ip: ['〔만들려 한 것〕의 〔문제〕를 〔방법〕으로 개선함'],
+    abroad: ['〔수업에서 다룬 주제〕를 〔자료〕로 조사해 〔알게 된 것〕을 정리함'],
+    license: ['〔익힌 기능〕을 〔수업 활동〕에 적용해 〔결과〕를 만듦'],
+    afterschool: ['〔배운 내용〕을 〔수업 활동〕에서 〔방법〕으로 활용함'],
+    brand: ['〔도구의 성격〕을 활용해 〔한 일〕을 수행함'],
+    default: [
+      '〔학생이 실제로 한 일〕을 근거로 〔알게 된 것〕을 정리함',
+      '〔활동〕에서 〔발견한 것〕을 찾아 〔판단〕을 제시함',
+    ],
+  };
+
   /** 추상적 표현: 막연한 목적어 + 인지 동사 */
   const VAGUE_NOUNS = ['문제점', '내용', '의미', '중요성', '특징', '원인과 결과', '원인', '영향', '필요성', '가치', '다양한 측면', '여러 측면', '시사점', '한계'];
   const COGNITIVE_VERBS = '(?:분석|탐구|이해|파악|조사|정리|인식|고찰|살펴봄|살펴보|알게\\s*됨|알게\\s*되|깨달|탐색)';
@@ -453,7 +507,7 @@
 
   SA.lex = {
     CRITERIA, DANGER_RULES, BRAND_TERMS, EDU_ALLOW, BYTE_LIMIT,
-    EVAL_PATTERNS, ABSTRACT_PATTERNS, FUTURE_PATTERNS, PERSONALITY_PATTERNS, ADVANCED_CONCEPTS, LEAP_TRIGGERS, TYPO_TERMS, TYPO_MAP, VAGUE_NOUNS, CLICHES, EXAGGERATIONS, SELF_VOICE, SYMBOL, KNOWLEDGE_PREDICATES, LEARN_ONLY, GROWTH_SHAPES,
+    EVAL_PATTERNS, ABSTRACT_PATTERNS, FUTURE_PATTERNS, PERSONALITY_PATTERNS, ADVANCED_CONCEPTS, LEAP_TRIGGERS, TYPO_TERMS, TYPO_MAP, FORBIDDEN_TEMPLATES, VAGUE_NOUNS, CLICHES, EXAGGERATIONS, SELF_VOICE, SYMBOL, KNOWLEDGE_PREDICATES, LEARN_ONLY, GROWTH_SHAPES,
     PROCESS_MARKERS, GROWTH_MARKERS, THINK_VERBS, ACT_VERBS, GENERIC_WORDS, CANDIDATES, TEMPLATES, SLOT, OBSERVE_POINTS,
     SKELETON_CATS, SKELETON_LABEL, COMPETENCY, PRAISE,
   };
