@@ -33,6 +33,30 @@
 
   <div id="cardModal" class="modal" hidden></div>
 
+  <section class="fb-wrap" aria-labelledby="fbTitle">
+    <div class="card card-pad feedback">
+      <div class="fb-head">
+        <div>
+          <span class="pill-badge">선생님 한 줄 피드백</span>
+          <h2 id="fbTitle" style="margin-top:10px">써 보시니 어떠셨나요?</h2>
+          <p class="muted small" style="margin:6px 0 0">한 줄이면 충분합니다. 잘 못 잡은 문장, 어색한 대체 문장, 있었으면 하는 기능 —
+            무엇이든 적어 주시면 사전과 규칙에 반영합니다. <b>학생 이름·기록은 넣지 말아 주세요.</b></p>
+        </div>
+      </div>
+      <div class="fb-tones" role="group" aria-label="느낌">
+        <button class="fb-tone" type="button" data-act="fb-tone" data-tone="good">도움이 됐어요</button>
+        <button class="fb-tone" type="button" data-act="fb-tone" data-tone="soso">쓸 만해요</button>
+        <button class="fb-tone" type="button" data-act="fb-tone" data-tone="bad">아쉬워요</button>
+      </div>
+      <div class="fb-row">
+        <input type="text" id="fbText" maxlength="200" placeholder="예: 교과 용어를 상호명으로 잘못 잡습니다 / 대체 문장이 더 짧으면 좋겠어요">
+        <button class="btn btn-primary" type="button" data-act="fb-send">보내기</button>
+      </div>
+      <div class="fb-note faint small" id="fbNote">보내기를 누르면 피드백 글이 담긴 창이 열립니다. 전송은 선생님이 직접 확인한 뒤 이루어집니다.</div>
+      <div id="fbMine"></div>
+    </div>
+  </section>
+
   <footer class="site-footer">
     <span class="foot-name">생기부 감사관</span>
     <span>2026학년도 학교생활기록부 기재요령(고등학교) 기준 점검 도구</span>
@@ -46,6 +70,7 @@
   <script src="js/demo.js"></script>
   <script src="js/stage.js"></script>
   <script src="js/report.js"></script>
+  <script src="js/feedback.js"></script>
   <script src="js/app.js"></script>
 </body>
 </html>

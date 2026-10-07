@@ -1,7 +1,7 @@
 /* 화면 — 개별 감사(진단 → 3초 처방 → 수정 작업대) / 학급 감사(세특 응급실 → 집중치료 → 완료 보고서)
  * 등급: 위험(기재 금지 · 바로 수정, 남아 있으면 입력 불가) / 주의(수정 권장, 품질 점수에 반영) */
 (function () {
-  const { ko, lex, engine: E, demo, art, stage, report } = window.SA;
+  const { ko, lex, engine: E, demo, art, stage, report, feedback } = window.SA;
 
   /* ───────────── 유틸 ───────────── */
   const $ = (sel, root = document) => root.querySelector(sel);
@@ -644,6 +644,42 @@
       S.scan = false;
       stage.scanSingle($('#view-single .report'), S.audit);
     });
+  }
+
+  /* ── 선생님 한 줄 피드백 ── */
+  let fbTone = '';
+
+  function renderFeedbackMine() {
+    const host = $('#fbMine');
+    if (!host) return;
+    const list = feedback.load();
+    if (!list.length) { host.innerHTML = ''; return; }
+    host.innerHTML = `<details class="fb-mine"><summary>내가 남긴 피드백 ${list.length}개</summary>
+      ${list.slice().reverse().map((f) => `<div class="fb-item"><span class="fb-when">${esc(f.at)}</span>
+        ${f.tone ? `<span class="pill blue">${esc(feedback.TONE_LABEL[f.tone] || '')}</span>` : ''}
+        <span>${esc(f.text)}</span></div>`).join('')}
+      <div class="faint small">이 목록은 이 브라우저에만 저장됩니다.</div></details>`;
+  }
+
+  function sendFeedback() {
+    const input = $('#fbText');
+    const note = $('#fbNote');
+    const text = (input.value || '').trim();
+    if (text.length < 4) { toast('한 줄만 적어 주세요 (4자 이상).'); input.focus(); return; }
+    const entry = { text, tone: fbTone, at: new Date().toLocaleDateString('ko-KR') };
+    feedback.add(entry);
+    renderFeedbackMine();
+    const target = feedback.sendUrl(entry);
+    if (target) {
+      const w = window.open(target.url, '_blank', 'noopener');
+      if (!w) {
+        if (note) note.innerHTML = '창이 막혀 열리지 않았습니다. 아래 주소를 복사해 열어 주세요.<br>' + esc(target.url);
+      }
+    }
+    if (note && target) note.textContent = '고맙습니다. 열린 창에서 내용을 확인하고 보내 주세요. 적어 주신 글은 이 브라우저에도 남겨 두었습니다.';
+    input.value = '';
+    fbTone = '';
+    document.querySelectorAll('.fb-tone').forEach((b) => b.classList.remove('on'));
   }
 
   /* ── 감사 보고서 한 장 (PNG) ── */
@@ -1459,6 +1495,15 @@
       }
       case 'card-close':
         closeCard(); break;
+      case 'fb-tone': {
+        const same = el.classList.contains('on');
+        document.querySelectorAll('.fb-tone').forEach((b) => b.classList.remove('on'));
+        fbTone = same ? '' : el.dataset.tone;
+        if (!same) el.classList.add('on');
+        break;
+      }
+      case 'fb-send':
+        sendFeedback(); break;
       case 'go-home': // 왼쪽 위 집 모양 — 개별 감사 첫 화면으로 (작업 내용은 사례로 보존)
         ev.preventDefault();
         stage.stop();
@@ -1788,6 +1833,10 @@
   });
 
   window.addEventListener('resize', () => { if (S.panel) positionPopover(); });
+
+  renderFeedbackMine();
+  const fbInput = $('#fbText');
+  if (fbInput) fbInput.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') { ev.preventDefault(); sendFeedback(); } });
 
   const markEl = $('#brandMark');
   if (markEl) markEl.innerHTML = art.mark();
