@@ -709,3 +709,13 @@ table.students .num { font-variant-numeric: tabular-nums; font-weight: 700; }
 .fb-item { display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline; font-size: 13.5px; margin-top: 8px; }
 .fb-when { font-size: 11.5px; color: var(--ink-3); font-variant-numeric: tabular-nums; }
 @media (max-width: 560px) { .fb-row { flex-wrap: wrap; } .fb-row .btn { width: 100%; } }
+
+/* 내 사전 */
+.dict { margin-top: 14px; border-top: 2px dotted var(--line-2); padding-top: 10px; }
+.dict > summary { cursor: pointer; font-size: 13px; font-weight: 700; color: var(--blue-deep); }
+.dict-row { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+.dict-row input { flex: 1 1 180px; min-width: 0; }
+.dict-items { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.dict-item { display: inline-flex; align-items: center; gap: 6px; background: var(--bg); border-radius: 999px; padding: 5px 8px 5px 12px; font-size: 13px; }
+.dict-x { border: 0; background: none; color: var(--ink-3); cursor: pointer; font-size: 12px; padding: 2px 4px; border-radius: 50%; }
+.dict-x:hover { background: var(--red-bg); color: var(--red); }

@@ -54,6 +54,17 @@
       </div>
       <div class="fb-note faint small" id="fbNote">보내기를 누르면 피드백 글이 담긴 창이 열립니다. 전송은 선생님이 직접 확인한 뒤 이루어집니다.</div>
       <div id="fbMine"></div>
+      <details class="dict">
+        <summary>내 사전 — 우리 학교에서 자주 나오는 상호명·앱 이름 추가하기</summary>
+        <p class="muted small" style="margin:8px 0 0">사전에 없는 이름 때문에 놓치는 일을 직접 메울 수 있습니다.
+          추가하면 <b>이 브라우저에서 하는 다음 감사부터</b> 위험(상호명)으로 잡히고, 적어 두신 대체어로 바로 바뀝니다.</p>
+        <div class="dict-row">
+          <input type="text" id="dictWord" maxlength="30" placeholder="잡을 이름 (예: 모두의마블)">
+          <input type="text" id="dictAlt" maxlength="30" placeholder="바꿀 말 (예: 보드게임 앱)">
+          <button class="btn" type="button" data-act="dict-add">추가</button>
+        </div>
+        <div id="dictList"></div>
+      </details>
     </div>
   </section>
 

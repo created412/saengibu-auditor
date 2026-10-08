@@ -405,3 +405,45 @@ test('대체 문장에는 지적당한 말과 금지어를 다시 쓰지 않는�
   const vague = a.issues.find((i) => i.type === 'vague');
   assert.ok(E.buildQuestion(vague, a).suggestions.some((s) => s.includes('의열단')));
 });
+
+test('상호명: 일반어와 겹치는 이름은 그 맥락에서만 잡는다', () => {
+  // 금융 맥락의 ‘토스’는 상호명
+  const fin = E.audit('토스 앱으로 송금 과정을 살펴보고 수수료 구조를 비교함.');
+  assert.ok(fin.danger.some((i) => i.titles.includes('상호명')), '토스(금융)를 놓침');
+  assert.ok(fin.danger[0].replacements.includes('금융 앱'));
+  // 배구의 토스, 채소 당근은 상호명이 아니다
+  ['배구 수업에서 토스 동작을 반복해 연습함.', '당근을 썰어 세포 관찰 실험에 사용함.',
+  ].forEach((t) => assert.equal(E.audit(t).danger.length, 0, `오탐: ${t}`));
+  // 새로 넣은 분야들
+  [['당근마켓 거래 사례를 조사함.', '중고 거래 플랫폼'],
+    ['백준에서 알고리즘 문제를 풀며 시간복잡도를 비교함.', '온라인 코딩 문제 사이트'],
+    ['카카오뱅크의 비대면 가입 절차를 조사함.', '인터넷 은행'],
+    ['메가스터디 강의 자료를 참고함.', '사설 교육업체'],
+  ].forEach(([t, alt]) => {
+    const a = E.audit(t);
+    assert.ok(a.danger.some((i) => (i.replacements || []).includes(alt)), `${t} → ${alt} 없음`);
+  });
+});
+
+test('사전에 없는 ‘○○ 앱’은 상호명 의심(주의)으로 띄운다', () => {
+  const a = E.audit('밀리의서재 앱으로 책을 읽고 독후감을 씀.');
+  const b = a.caution.find((i) => i.type === 'brandish');
+  assert.ok(b, '상호명 의심 미검출');
+  assert.equal(E.buildQuestion(b, a).mode, 'choice');
+  assert.match(E.applyAnswer(a.text, b, { kind: 'replace' }).text, /모바일 앱/);
+  // 일반어가 머리인 ‘앱’은 건드리지 않는다
+  ['학습 앱을 활용하여 어휘를 정리함.', '영어 단어 암기 앱을 매일 사용함.',
+    '출석 체크 앱을 직접 만들어 봄.', '미세먼지 측정 앱을 제작함.',
+  ].forEach((t) => assert.ok(!E.audit(t).issues.some((i) => i.type === 'brandish'), `오탐: ${t}`));
+});
+
+test('내 사전: 교사가 넣은 이름을 그다음 감사부터 잡는다', () => {
+  const t = '모두의마블로 경제 개념을 익힘.';
+  assert.equal(E.audit(t).danger.length, 0);
+  E.setUserBrands([{ word: '모두의마블', alt: '보드게임 앱' }]);
+  const a = E.audit(t);
+  assert.equal(a.danger.length, 1);
+  assert.match(E.applyAnswer(t, a.danger[0], { kind: 'replace' }).text, /^보드게임 앱으로/);
+  E.setUserBrands([]); // 지우면 원래대로
+  assert.equal(E.audit(t).danger.length, 0);
+});

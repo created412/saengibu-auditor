@@ -19,6 +19,7 @@
     source: { label: '원자료 근거 불명', criterion: 'exag', grade: 'caution', ref: '19쪽 5-가' },
     vague: { label: '추상적 표현', criterion: 'specific', grade: 'caution', ref: '95쪽' },
     exag: { label: '과장 표현', criterion: 'exag', grade: 'caution', ref: '19쪽 5-가' },
+    brandish: { label: '상호명 의심 — 확인 필요', criterion: 'exag', grade: 'caution', ref: '19쪽 3-타' },
     future: { label: '근거 없는 미래 예측', criterion: 'exag', grade: 'caution', ref: '19쪽 5-가 · 95쪽' },
     personality: { label: '주관적 인성 평가', criterion: 'evidence', grade: 'caution', ref: '95쪽 · 117쪽 가' },
     leap: { label: '교과 개념 비약 · 과장 의심', criterion: 'exag', grade: 'caution', ref: '19쪽 5-가' },
@@ -227,7 +228,7 @@
     const masked = text.replace(/『[^』]*』|《[^》]*》|「[^」]*」/g, (x) => ' '.repeat(x.length));
     for (const rule of lex.DANGER_RULES) {
       const patterns = rule.terms || [[rule.re, null]];
-      for (const [re, fixed] of patterns) {
+      for (const [re, fixed, needs] of patterns) {
         re.lastIndex = 0;
         let m;
         while ((m = re.exec(masked))) {
@@ -235,6 +236,7 @@
           const s = sentenceAt(sentences, m.index);
           if (!s) continue;
           if (rule.needs && !rule.needs.test(s.text)) continue;
+          if (needs && !needs.test(s.text)) continue; // 낱말마다 다른 맥락 조건 (예: ‘토스’는 금융 맥락일 때만)
           if (rule.allow && rule.allow.test(m[0])) continue;
           if (rule.filter && !rule.filter(m, s.text)) continue;
           const word = rule.mode === 'replace';
@@ -394,6 +396,27 @@
       if (overlaps(cautionTaken(), start, end)) continue;
       push('leap', start, end, { penalty: 22, deleteMode: 'tail',
         why: `‘${hit[0]}’을 스스로 깨우쳤다고만 적혀 있고, 무엇을 어떻게 해서 알게 되었는지가 없습니다. 근거가 없으면 과장·허위 서술로 읽힙니다.` });
+    }
+
+    // ④-4 목록에 없는 상호 의심 ('○○ 앱', 주식회사 ○○)
+    for (const re of [lex.BRANDISH, lex.COMPANY_MARK]) {
+      re.lastIndex = 0;
+      let m;
+      while ((m = re.exec(text))) {
+        if (!m[0].trim()) { re.lastIndex++; continue; }
+        const head = (m[1] || m[0]).trim();
+        if (lex.BRAND_GENERIC_HEAD.test(head) || lex.GENERIC_WORDS.has(head)) continue;
+        if (/(?:에서|에게|에|으로|로|의|을|를|은|는|와|과|도|만|부터|까지|하는|라는)$/.test(head)) continue; // 조사까지 먹은 경우
+        if (lex.EDU_ALLOW.test(m[0])) continue;
+        const start = m.index;
+        const end = m.index + m[0].trimEnd().length;
+        if (overlaps(taken(), start, end)) continue; // 이미 상호명으로 잡혔으면 넘어간다
+        push('brandish', start, end, {
+          penalty: 10, mode: 'replace', matches: [m[0].trim()],
+          replacement: '모바일 앱', replacements: ['모바일 앱', '온라인 서비스', '응용 프로그램'],
+          why: '사전에 없는 이름이지만 상호명으로 보입니다. 상호명이면 상위 일반어로 바꾸고(기재요령 19쪽 3-타), 아니면 그대로 두세요.',
+        });
+      }
     }
 
     // ⑤ 상투 표현 (긴 표현부터, 겹치면 생략)
@@ -565,6 +588,31 @@
     if (score >= 80) return { key: 'green', label: '기록 양호', stamp: '양호', sub: '입력 가능' };
     if (score >= 60) return { key: 'amber', label: '주의 · 보완 권장', stamp: '주의', sub: '보완 권장' };
     return { key: 'amber', label: '주의 · 재작성 권장', stamp: '주의', sub: '재작성 권장' };
+  }
+
+  /* ───────────── 내 사전 — 학교마다 자주 나오는 말을 교사가 더한다 ───────────── */
+
+  let userBrands = [];
+
+  /**
+   * 교사가 등록한 상호명 목록을 반영한다. [{ word, alt }]
+   * 사전에 없는 이름 때문에 놓치는 일을 교사가 직접 메울 수 있게 하는 장치.
+   */
+  function setUserBrands(list) {
+    userBrands.forEach((t) => {
+      const at = lex.BRAND_TERMS.indexOf(t);
+      if (at >= 0) lex.BRAND_TERMS.splice(at, 1);
+    });
+    userBrands = [];
+    (list || []).forEach(({ word, alt }) => {
+      const w = String(word || '').trim();
+      if (!w) return;
+      const safe = w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const term = [new RegExp(safe, 'g'), [String(alt || '').trim() || '관련 서비스']];
+      userBrands.push(term);
+      lex.BRAND_TERMS.unshift(term);
+    });
+    return userBrands.length;
   }
 
   /* ───────────── 〔 〕 칸 ───────────── */
@@ -916,6 +964,17 @@
           ],
           actions: ['rewrite', 'compose', 'delete'],
         };
+      case 'brandish':
+        return {
+          ...q,
+          prompt: `‘${issue.matches[0]}’은 상호명인가요? 상호명이면 상위 일반어로 바꿔야 합니다.`,
+          mode: 'choice',
+          choices: [
+            { label: `상호명 → ‘${issue.replacements[0]}’으로 바꾸기`, answer: { kind: 'replace' }, primary: true },
+            { label: '상호명이 아님 → 그대로 두기', answer: { kind: 'keep' } },
+          ],
+          actions: ['replace', 'keep', 'delete'],
+        };
       case 'source':
         return {
           ...q,
@@ -1183,7 +1242,7 @@
     return res;
   }
 
-  const APPLY_ORDER = { forbidden: 0, symbol: 1, exag: 1, future: 2, personality: 2, leap: 2, cliche: 2, vague: 2, knowledge: 3, selfvoice: 3, source: 4, evidence: 5, style: 6, listing: 7, growth: 7, overflow: 8 };
+  const APPLY_ORDER = { forbidden: 0, brandish: 0, symbol: 1, exag: 1, future: 2, personality: 2, leap: 2, cliche: 2, vague: 2, knowledge: 3, selfvoice: 3, source: 4, evidence: 5, style: 6, listing: 7, growth: 7, overflow: 8 };
 
   /**
    * 한 학생의 여러 응답을 한꺼번에 적용. 지우는 처방 먼저, 문장을 닫거나 사실을 덧붙이는 처방은 나중에.
@@ -1418,7 +1477,7 @@
 
   SA.engine = {
     ISSUE_META, GRADE, audit, verdict, buildQuestion, topQuestions, expectedScore, applyAnswer, applyAnswers, guard,
-    rebuildSuggestions, composeSentence, fragments, slotState,
+    rebuildSuggestions, composeSentence, fragments, slotState, setUserBrands,
     classAudit, findEvidence, changedSentences, diffWords, splitClauses, skeletonOf,
     specificStems, evidenceStrength,
   };

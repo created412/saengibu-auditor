@@ -646,6 +646,28 @@
     });
   }
 
+  /* ── 내 사전 (이 브라우저에만 저장) ── */
+  const DICT_KEY = 'sa.dict.v1';
+
+  function dictLoad() {
+    try { return JSON.parse(localStorage.getItem(DICT_KEY) || '[]'); } catch (e) { return []; }
+  }
+
+  function dictSave(list) {
+    try { localStorage.setItem(DICT_KEY, JSON.stringify(list.slice(0, 100))); } catch (e) { /* 저장 못 해도 이번 감사에는 반영된다 */ }
+    E.setUserBrands(list);
+  }
+
+  function renderDict() {
+    const host = $('#dictList');
+    if (!host) return;
+    const list = dictLoad();
+    host.innerHTML = list.length
+      ? `<div class="dict-items">${list.map((d, i) => `<span class="dict-item"><b>${esc(d.word)}</b> → ${esc(d.alt)}
+          <button class="dict-x" type="button" data-act="dict-del" data-k="${i}" aria-label="삭제">✕</button></span>`).join('')}</div>`
+      : '<div class="faint small" style="margin-top:8px">아직 추가한 말이 없습니다.</div>';
+  }
+
   /* ── 선생님 한 줄 피드백 ── */
   let fbTone = '';
 
@@ -668,7 +690,9 @@
     if (text.length < 4) { toast('한 줄만 적어 주세요 (4자 이상).'); input.focus(); return; }
     const entry = { text, tone: fbTone, at: new Date().toLocaleDateString('ko-KR') };
     feedback.add(entry);
-    renderFeedbackMine();
+    E.setUserBrands(dictLoad()); // 교사가 등록한 말을 먼저 반영
+  renderDict();
+  renderFeedbackMine();
     const target = feedback.sendUrl(entry);
     if (target) {
       const w = window.open(target.url, '_blank', 'noopener');
@@ -1495,6 +1519,29 @@
       }
       case 'card-close':
         closeCard(); break;
+      case 'dict-add': {
+        const w = ($('#dictWord').value || '').trim();
+        const alt = ($('#dictAlt').value || '').trim();
+        if (w.length < 2) { toast('잡을 이름을 두 글자 이상 적어 주세요.'); return; }
+        const list = dictLoad();
+        if (list.some((d) => d.word === w)) { toast('이미 추가된 말입니다.'); return; }
+        list.unshift({ word: w, alt: alt || '관련 서비스' });
+        dictSave(list);
+        renderDict();
+        $('#dictWord').value = '';
+        $('#dictAlt').value = '';
+        toast(`‘${w}’을(를) 내 사전에 넣었습니다. 다음 감사부터 잡습니다.`);
+        if (S.stage === 'report') { reauditSingle(); render(); }
+        break;
+      }
+      case 'dict-del': {
+        const list = dictLoad();
+        list.splice(Number(el.dataset.k), 1);
+        dictSave(list);
+        renderDict();
+        if (S.stage === 'report') { reauditSingle(); render(); }
+        break;
+      }
       case 'fb-tone': {
         const same = el.classList.contains('on');
         document.querySelectorAll('.fb-tone').forEach((b) => b.classList.remove('on'));
