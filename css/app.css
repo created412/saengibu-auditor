@@ -719,3 +719,7 @@ table.students .num { font-variant-numeric: tabular-nums; font-weight: 700; }
 .dict-item { display: inline-flex; align-items: center; gap: 6px; background: var(--bg); border-radius: 999px; padding: 5px 8px 5px 12px; font-size: 13px; }
 .dict-x { border: 0; background: none; color: var(--ink-3); cursor: pointer; font-size: 12px; padding: 2px 4px; border-radius: 50%; }
 .dict-x:hover { background: var(--red-bg); color: var(--red); }
+
+/* 이미 다른 학생에게 쓴 문장 틀 */
+.tpl.used, .qf.used { border-style: dashed; color: var(--ink-3); }
+.used-tag { display: inline-block; margin-left: 8px; font-size: 11px; font-weight: 700; color: var(--amber); background: var(--amber-bg); border-radius: 999px; padding: 1px 8px; vertical-align: middle; }

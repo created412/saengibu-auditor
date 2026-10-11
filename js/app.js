@@ -544,7 +544,7 @@
             <div class="hero-meta">
               <span class="gcount red ${a.danger.length ? '' : 'zero'}"><b>위험 ${a.danger.length}</b> 기재 금지</span>
               <span class="gcount amber ${a.caution.length ? '' : 'zero'}"><b>주의 ${a.caution.length}</b> 수정 권장</span>
-              ${a.hasSource ? '<span class="pill blue">원자료 대조 ✓</span>' : ''}
+              ${a.hasSource ? '<span class="pill blue">원자료 대조 ✓</span>' : '<span class="pill" style="background:var(--bg-2);color:var(--ink-2)" title="수행평가 결과물·활동지 등 원자료를 넣으면 기록의 사실을 자료와 대조합니다">원자료 없음 · 사실 대조 안 함</span>'}
               <span class="faint small">${a.bytes.toLocaleString()} byte · 한글 약 ${hangulChars(a.bytes)}자 / 1,500</span>
             </div>
           </div>
@@ -1244,6 +1244,12 @@
     if (btn) btn.disabled = !any;
   }
 
+  /** 이 틀을 이미 다른 학생에게 썼으면 표시 — 같은 틀이 반에 퍼지면 ‘이름 바꿔도 되는 세특’이 된다 */
+  function usedTpl(t) {
+    const n = (C.tplUse || {})[t] || 0;
+    return n ? `<span class="used-tag">이미 ${n}명에게 쓴 틀</span>` : '';
+  }
+
   function qcardHtml(id, item, k) {
     const { issue, question: q } = item;
     const d = cdraft(id, issue.signature);
@@ -1254,7 +1260,7 @@
       body = q.choices.map((ch, j) => `<label class="opt"><input type="radio" name="q-${k}" data-act="c-choice" data-sig="${sig}" data-k="${j}" ${d.choice === j ? 'checked' : ''}><span class="opt-text">${esc(ch.label)}</span></label>`).join('');
     } else if (q.mode === 'text') {
       body = `${(q.templates || []).length && !d.none ? `<div class="tpl-label">문장 틀을 고르고 〔 〕 칸만 채우세요</div>
-        <div class="tpl-list">${q.templates.map((t, j) => `<button class="tpl ${d.detail === t ? 'on' : ''}" type="button" data-act="c-template" data-sig="${sig}" data-k="${j}">${esc(t)}</button>`).join('')}</div>` : ''}
+        <div class="tpl-list">${q.templates.map((t, j) => `<button class="tpl ${d.detail === t ? 'on' : ''} ${usedTpl(t) ? 'used' : ''}" type="button" data-act="c-template" data-sig="${sig}" data-k="${j}">${esc(t)}${usedTpl(t)}</button>`).join('')}</div>` : ''}
         <input type="text" id="cdetail-${k}" data-input="c-detail" data-sig="${sig}" value="${esc(d.detail)}" placeholder="${esc(q.customPlaceholder)}" ${d.none ? 'disabled' : ''}>
         ${hasSlot(d.detail) ? '<div class="small" style="color:var(--amber);margin-top:4px">〔 〕 칸을 채우면 적용할 수 있습니다.</div>' : ''}
         ${q.sourceHits.length ? `<div class="small muted" style="margin-top:6px">자료 참고: ${q.sourceHits.map((h) => `“${esc(h.text)}”`).join(' ')}</div>` : ''}
@@ -1278,13 +1284,13 @@
       const quick = (q.suggestions || []).slice(0, 2);
       rewriteBlock = `${quick.length && !d.rewrite && !made ? `<div class="quickfix">
         <div class="qf-label">이렇게 바꿔 보세요 <span class="faint">— 누르면 고쳐 쓰기 칸에 들어갑니다</span></div>
-        ${quick.map((t, j) => `<button class="qf" type="button" data-act="c-sugg" data-sig="${sig}" data-k="${j}">${esc(t)}</button>`).join('')}
+        ${quick.map((t, j) => `<button class="qf ${usedTpl(t) ? 'used' : ''}" type="button" data-act="c-sugg" data-sig="${sig}" data-k="${j}">${esc(t)}${usedTpl(t)}</button>`).join('')}
       </div>` : ''}
       <details class="rw" ${d.rewrite || made ? 'open' : ''}>
         <summary>✎ 이 문장 고쳐 쓰기 — 뒤에 덧붙이지 않고 그 자리를 바꿉니다</summary>
         <div class="small muted" style="margin:6px 0">원문: “${esc(q.targets[0])}”</div>
         ${(q.suggestions || []).length ? `<div class="tpl-label">${issue.grade === 'danger' ? '금지 사실은 빼고 쓸 수 있는 문장' : '이 문장의 조각으로 만든 대체 문장'}</div>
-          <div class="tpl-list">${q.suggestions.map((t, j) => `<button class="tpl ${d.rewrite === t ? 'on' : ''}" type="button" data-act="c-sugg" data-sig="${sig}" data-k="${j}">${esc(t)}</button>`).join('')}</div>` : ''}
+          <div class="tpl-list">${q.suggestions.map((t, j) => `<button class="tpl ${d.rewrite === t ? 'on' : ''} ${usedTpl(t) ? 'used' : ''}" type="button" data-act="c-sugg" data-sig="${sig}" data-k="${j}">${esc(t)}${usedTpl(t)}</button>`).join('')}</div>` : ''}
         <input type="text" data-input="c-rewrite" data-sig="${sig}" value="${esc(d.rewrite)}" placeholder="고쳐 쓸 문장 (〔 〕 칸은 채워 주세요)">
         ${hasSlot(d.rewrite) ? '<div class="small" style="color:var(--amber);margin-top:4px">〔 〕 칸을 채우면 적용할 수 있습니다.</div>' : ''}
         <div class="tpl-label" style="margin-top:8px">또는 세 칸만 채우면 문장으로 만들어 드립니다</div>
@@ -1345,6 +1351,7 @@
 
   function renderTreatResult() {
     const L = C.last;
+    const dupWarn = L.dupDelta > 0 ? `<div class="alert amber"><b>이 수정으로 학생 간 반복이 ${L.dupDelta}쌍 늘었습니다.</b> 다른 학생에게 쓴 문장 틀과 같아졌습니다. 〔 〕를 이 학생만의 장면으로 바꾸면 사라집니다.</div>` : '';
     const st = studentOf(L.id);
     const r = resultOf(L.id);
     const left = r.audit.issues.filter((i) => i.type !== 'style');
@@ -1365,6 +1372,7 @@
           ${left.length ? `<span class="pill amber">남은 지적 ${left.length}건</span>` : '<span class="pill green">통과 ✓</span>'}
         </div>
         <div class="row">
+          ${dupWarn}
           <button class="btn btn-ghost" type="button" data-act="treat-undo">↶ 되돌리기</button>
           <div class="spacer"></div>
           <button class="btn btn-primary btn-lg" type="button" data-act="treat-next">${C.pos + 1 < C.queue.length ? '다음 학생' : '완료 보고서 보기'}</button>
@@ -1402,6 +1410,7 @@
           ${row('학생 간 반복', b.stats.dupPairs, n.stats.dupPairs, '쌍')}
           ${row('고유성 부족', b.stats.lowUnique, n.stats.lowUnique, '명')}
         </table>
+        ${n.stats.dupPairs > b.stats.dupPairs ? `<div class="alert amber"><b>학생 간 반복이 ${b.stats.dupPairs}쌍 → ${n.stats.dupPairs}쌍으로 늘었습니다.</b> 같은 문장 틀을 여러 학생에게 쓰면 고유성이 떨어집니다. 틀의 〔 〕는 학생마다 다른 장면으로 채워 주세요.</div>` : ''}
         <p class="zero-line">교사가 확인한 사실 ${t.facts}건을 바탕으로 ${t.improved}개 문장을 개선했습니다.<br>
           AI가 임의로 추가한 학생 활동: <em style="color:${t.aiAdded ? 'var(--red)' : 'var(--green)'}">${t.aiAdded}건</em></p>
         <p class="muted small">‘AI 임의 추가’는 사실 가드가 수정본 전체를 원문·교사 확인 사실과 다시 대조해 센 값입니다(수치·부정 표현 변경 포함).</p>
@@ -1440,6 +1449,13 @@
     const snap = { text: st.text, facts: [...st.facts], confirmed: st.confirmed, dismissed: new Set(st.dismissed), verified: new Set(st.verified), status: st.status };
     const answered = items.map(({ issue, question }) => ({ issue, answer: classAnswer(question, cdraft(id, issue.signature)) }));
     const res = E.applyAnswers(st.text, answered);
+    const dupBefore = C.now.stats.dupPairs;
+    // 어떤 문장 틀을 몇 명에게 썼는지 센다 — 반 전체가 같은 틀이면 고유성이 무너진다
+    C.tplUse = C.tplUse || {};
+    items.forEach(({ issue }) => {
+      const d = cdraft(id, issue.signature);
+      if (d.tpl && answered.find((x) => x.issue.signature === issue.signature).answer) C.tplUse[d.tpl] = (C.tplUse[d.tpl] || 0) + 1;
+    });
     res.dismissed.forEach((sig) => {
       const ans = answered.find((x) => x.issue.signature === sig).answer;
       if (ans.confirmed) st.verified.add(sig); else st.dismissed.add(sig);
@@ -1449,7 +1465,7 @@
     st.text = res.text;
     st.status = 'done';
     classReaudit();
-    C.last = { id, before: r.audit.overall, beforeText: snap.text, snapshot: snap, facts: res.facts.length + res.confirmed, guard: E.guard(st.original, st.text, st.facts) };
+    C.last = { id, before: r.audit.overall, beforeText: snap.text, snapshot: snap, facts: res.facts.length + res.confirmed, guard: E.guard(st.original, st.text, st.facts), dupDelta: C.now.stats.dupPairs - dupBefore };
     render();
     window.scrollTo({ top: 0 });
   }
@@ -1806,6 +1822,7 @@
         const item = classQuestions(id).find((x) => x.issue.signature === sig);
         const d = cdraft(id, sig);
         d.detail = (item.question.templates || [])[Number(el.dataset.k)] || '';
+        d.tpl = d.detail;
         render();
         const items = classQuestions(id);
         const k = items.findIndex((x) => x.issue.signature === sig);
@@ -1819,6 +1836,7 @@
         const d = cdraft(id, sig);
         const picked = (item.question.suggestions || [])[Number(el.dataset.k)] || '';
         d.rewrite = d.rewrite === picked ? '' : picked;
+        d.tpl = d.rewrite ? picked : '';
         render();
         const k = classQuestions(id).findIndex((x) => x.issue.signature === sig);
         const input = document.querySelector(`#qc-${k} [data-input="c-rewrite"]`);

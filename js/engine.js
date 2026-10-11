@@ -230,11 +230,12 @@
     const masked = text.replace(/『[^』]*』|《[^》]*》|「[^」]*」/g, (x) => ' '.repeat(x.length));
     for (const rule of lex.DANGER_RULES) {
       const patterns = rule.terms || [[rule.re, null]];
-      for (const [re, fixed, needs] of patterns) {
+      for (const [re, fixed, needs, opt] of patterns) {
         re.lastIndex = 0;
         let m;
         while ((m = re.exec(masked))) {
           if (!m[0]) { re.lastIndex++; continue; }
+          if (opt && opt.standalone && m.index > 0 && /[가-힣A-Za-z]/.test(masked[m.index - 1])) continue; // 낱말 한가운데면 통과
           const s = sentenceAt(sentences, m.index);
           if (!s) continue;
           if (rule.needs && !rule.needs.test(s.text)) continue;
@@ -296,7 +297,10 @@
         // (‘맨 앞자리에 앉아 듣는’ 같은 일반적 태도는 ‘능력이 뛰어나다’의 근거가 되지 못한다)
         const ACT = new RegExp(lex.ACT_VERBS.source);
         const THINK = new RegExp(lex.THINK_VERBS.source);
-        const strong = (c) => (specificStems(c.text).length && (ACT.test(c.text) || THINK.test(c.text)) ? c.strength : 0);
+        // ‘읽고·보고·듣고·참여하고’처럼 접하기만 한 절은 역량의 근거가 아니다 — 무엇을 해냈는지(사고·산출)가 있어야 한다
+        const PASSIVE = /^(?:[^가-힣]*[가-힣]+(?:을|를|에|에서|의)\s*)*(?:읽|보|봄|듣|들음|시청|참여|참관|방문|배우|배움|접하|경험|수강|들어|관람|감상)[가-힣]*[.,]?$/;
+        const productive = (t) => THINK.test(t) || (ACT.test(t) && !/^(?:읽|보|듣|시청|참여|참관|방문)$/.test((t.match(new RegExp(lex.ACT_VERBS.source)) || [''])[0]) && !PASSIVE.test(t.trim()));
+        const strong = (c) => (specificStems(c.text).length && productive(c.text) ? c.strength : 0);
         let best = Math.max(0, ...own.map(strong));
         // 사고력 평가만 바로 앞 문장의 근거를 이어받는다. '모범이 됨' 같은 태도 평가는 그 문장 안에 장면이 있어야 함
         if (prev && p.cat === 'thinking') best = Math.max(best, ...prev.clauses.filter((c) => c.type === '사고').map((c) => strong(c) * 0.8));
@@ -405,7 +409,7 @@
     text.replace(/‘[^’]*’|“[^”]*”|'[^']*'|"[^"]*"|「[^」]*」|『[^』]*』|〈[^〉]*〉|《[^》]*》/g, (q, at) => { quotedSpans.push([at, at + q.length]); return q; });
     const inQuote = (a, b) => quotedSpans.some(([qs, qe]) => a >= qs && b <= qe);
     const genericHead = (h) => lex.BRAND_GENERIC_HEAD.test(h) || lex.GENERIC_WORDS.has(h) || lex.HEAD_SUFFIX_GENERIC.test(h) || lex.PLACE_GENERIC.test(h)
-      || /(?:에서|에게|에|으로|로|의|을|를|은|는|와|과|도|만|부터|까지|하는|라는|이라는|했|된)$/.test(h);
+      || /(?:에서|에게|에|으로|로|의|을|를|은|는|와|과|도|만|부터|까지|하는|라는|이라는|했|된|적|으|적인|스러운|다운|답게)$/.test(h);
     const suspect = (start, end, word, why) => {
       if (overlaps(taken(), start, end) || inQuote(start, end)) return;
       push('brandish', start, end, {
@@ -656,9 +660,10 @@
       const w = String(word || '').trim();
       if (!w) return;
       const safe = w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      // 한 글자 이름(젭 등)은 낱말로 홀로 설 때만 잡는다 — 다른 낱말 속에서 걸리지 않게
-      const body = w.length === 1 ? `(?<![가-힣A-Za-z])${safe}(?=$|[^가-힣A-Za-z]|에서|에|을|를|로|으로|의|은|는|이|가|와|과)` : safe;
-      const term = [new RegExp(body, 'g'), [String(alt || '').trim() || '관련 서비스']];
+      // 한 글자 이름(젭 등)은 낱말로 홀로 설 때만 잡는다 — 다른 낱말 속에서 걸리지 않게.
+      // (lookbehind는 구형 브라우저에서 터지므로 쓰지 않고, 앞 글자 검사는 엔진이 standalone 표시로 한다)
+      const body = w.length === 1 ? `${safe}(?=$|[^가-힣A-Za-z]|에서|에|을|를|로|으로|의|은|는|이|가|와|과)` : safe;
+      const term = [new RegExp(body, 'g'), [String(alt || '').trim() || '관련 서비스'], null, { standalone: w.length === 1 }];
       userBrands.push(term);
       lex.BRAND_TERMS.unshift(term);
     });
