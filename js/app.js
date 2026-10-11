@@ -314,7 +314,9 @@
       if (act === 'replace') return `🔁 ‘${issue.replacement}’(으)로 바꾸기`;
     }
     if (act === 'delete' && issue.type === 'exag') return '✂️ 강조어 빼기';
-    if (act === 'replace' && issue.type === 'logic' && issue.replacement) return `🔁 ‘${issue.replacement}’(으)로 바꾸기`;
+    if (act === 'replace' && (issue.type === 'logic' || issue.type === 'foreign') && issue.replacement) return `🔁 ‘${issue.replacement}’(으)로 바꾸기`;
+    if (act === 'replace' && issue.type === 'quote') return '🔁 직선 따옴표로 바꾸기';
+    if (act === 'keep' && (issue.type === 'foreign' || issue.type === 'quote')) return '✔ 그대로 두기';
     if (act === 'keep' && issue.type === 'logic') return '✔ 사실임 · 그대로 두기';
     if (act === 'delete' && issue.type === 'symbol') return '✂️ 기호 지우기';
     if (act === 'delete' && (issue.type === 'source' || issue.type === 'knowledge' || issue.type === 'selfvoice')) return '✂️ 문장 삭제';
@@ -851,7 +853,7 @@
       { label: '구체성 · 과장 · 상투 표현', ...mark(n(['vague', 'exag', 'cliche'])) },
       { label: '지식 서술 · 소감 어투 · 나열', ...mark(n(['knowledge', 'selfvoice', 'listing', 'growth'])) },
       { label: '미래 예측 · 인성 단정 · 비약 · 상호 의심', ...mark(n(['future', 'personality', 'leap', 'brandish'])) },
-      { label: '표기 · 반복 · 긴 문장', ...mark(n(['style', 'symbol', 'repeat', 'longsent'])) },
+      { label: '표기 · 따옴표 · 영문 · 반복 · 긴 문장', ...mark(n(['style', 'symbol', 'quote', 'foreign', 'repeat', 'longsent'])) },
     ];
   }
 

@@ -26,6 +26,8 @@
     personality: { label: '주관적 인성 평가', criterion: 'evidence', grade: 'caution', ref: '95쪽 · 117쪽 가' },
     leap: { label: '교과 개념 비약 · 과장 의심', criterion: 'exag', grade: 'caution', ref: '19쪽 5-가' },
     logic: { label: '뜻이 어긋남 · 앞뒤 불일치', criterion: 'evidence', grade: 'caution', ref: '95쪽 · 117쪽 가' },
+    foreign: { label: '영문·외국어 표기 · 한글 대체 권장', criterion: 'specific', grade: 'caution', ref: '학교 공통 기재 지침' },
+    quote: { label: '둥근 따옴표 → 직선 따옴표', criterion: null, grade: 'caution', ref: '나이스 입력 — 특수문자' },
     cliche: { label: '상투 표현', criterion: 'dup', grade: 'caution', ref: '95쪽' },
     style: { label: '명사형 종결', criterion: null, grade: 'caution', ref: '30쪽' },
     symbol: { label: '특수문자·번호', criterion: null, grade: 'caution', ref: '30쪽' },
@@ -455,6 +457,51 @@
         why: `‘${hit[0]}’을 스스로 깨우쳤다고만 적혀 있고, 무엇을 어떻게 해서 알게 되었는지가 없습니다. 근거가 없으면 과장·허위 서술로 읽힙니다.` });
     }
 
+    // ④-3-2 학교 공통 대체어(VR·HTML·파이썬·MBTI …) · 영문 낱말 — 한글로 바꿔 쓰기를 권장(기재 금지는 아니므로 주의)
+    const quotedSpans0 = [];
+    text.replace(/‘[^’]*’|“[^”]*”|'[^']*'|"[^"]*"|「[^」]*」|『[^』]*』|〈[^〉]*〉|《[^》]*》|\([^)]*\)/g, (q, at) => { quotedSpans0.push([at, at + q.length]); return q; });
+    const inQuote0 = (a, b) => quotedSpans0.some(([qs, qe]) => a >= qs && b <= qe);
+    const foreignHit = (start, end, word, reps, why) => {
+      if (overlaps(taken(), start, end) || inQuote0(start, end)) return;
+      push('foreign', start, end, { penalty: 4, mode: 'replace', matches: [word], replacement: reps[0], replacements: reps, why });
+    };
+    for (const [re, reps] of lex.FOREIGN_TERMS) {
+      re.lastIndex = 0;
+      let m;
+      while ((m = re.exec(text))) {
+        if (!m[0]) { re.lastIndex++; continue; }
+        if (m.index > 0 && /[A-Za-z]/.test(text[m.index - 1])) continue;
+        foreignHit(m.index, m.index + m[0].length, m[0], reps,
+          `‘${m[0]}’은(는) 우리 학교 공통 지침에서 한글로 바꿔 쓰기로 한 말입니다(‘${reps[0]}’). 기재요령이 금하는 말은 아니므로 그대로 둘 수도 있습니다.`);
+      }
+    }
+    // 그 밖의 영문 낱말(3자 이상, 일반화된 약어·도서명·따옴표 안 제외)
+    const latinRe = /[A-Za-z][A-Za-z&+.'-]*(?:\s+[A-Za-z][A-Za-z&+.'-]*)*/g;
+    const latinOk = (w) => w.length < 3 || lex.FOREIGN_ALLOW.test(w) || lex.LATIN_ALLOW.test(w) || /^[A-Z]{2,4}$/.test(w); // 짧은 대문자 약어는 일반화된 명사로 본다
+    let lm0;
+    while ((lm0 = latinRe.exec(text))) {
+      const run = lm0[0].replace(/[.'-]+$/, '');
+      const words0 = run.split(/\s+/);
+      if (words0.every(latinOk)) continue;
+      // 묶음 앞뒤의 허용 낱말은 떼어 낸다
+      let a = 0; let b = words0.length;
+      while (a < b && latinOk(words0[a])) a++;
+      while (b > a && latinOk(words0[b - 1])) b--;
+      const w = words0.slice(a, b).join(' ');
+      const start = lm0.index + run.indexOf(w);
+      foreignHit(start, start + w.length, w, ['한글 표기'],
+        `‘${w}’ — 학교생활기록부는 한글로 입력합니다. 도서명·일반화된 용어가 아니면 한글로 바꿔 적어 주세요.`);
+    }
+    // 둥근 따옴표(‘ ’ “ ”)는 나이스에 그대로 들어가지 않을 수 있다 — 직선 따옴표(' ")로
+    const curlyRe = /‘[^’\n]{0,80}’|“[^”\n]{0,80}”|[‘’“”]/g;
+    let cq;
+    while ((cq = curlyRe.exec(text))) {
+      const rep = cq[0].replace(/[‘’]/g, "'").replace(/[“”]/g, '"');
+      if (overlaps(taken(), cq.index, cq.index + cq[0].length)) continue;
+      push('quote', cq.index, cq.index + cq[0].length, { mode: 'replace', matches: [cq[0]], replacement: rep, replacements: [rep],
+        why: '한글(HWP)에서 복사한 둥근 따옴표입니다. 나이스에는 직선 따옴표(\' ")로 입력합니다.' });
+    }
+
     // ④-4 목록에 없는 상호 의심 — '○○ 앱', 주식회사 ○○, 도구 사용 틀의 머리말, 한글(라틴) 병기
     const quotedSpans = [];
     text.replace(/‘[^’]*’|“[^”]*”|'[^']*'|"[^"]*"|「[^」]*」|『[^』]*』|〈[^〉]*〉|《[^》]*》/g, (q, at) => { quotedSpans.push([at, at + q.length]); return q; });
@@ -613,6 +660,12 @@
       if (overlaps(taken(), s.start, s.end)) continue;
       if (lex.SELF_VOICE.test(s.text)) {
         push('selfvoice', s.start, s.end, { penalty: 20, why: '학생이 쓴 소감·다짐을 옮긴 듯한 문장입니다. 세특은 교사가 직접 관찰·평가한 내용을 교사의 시점으로 씁니다.' });
+        continue;
+      }
+      // 학생 입장 서술(~다짐함·~깨달음·~느낌) — 속마음은 교사가 볼 수 없다. 본 행동(발표함·기록함·포부를 밝힘)으로
+      const seenAct = (c) => (c.type === '행동' || c.type === '사고') && !lex.STUDENT_VIEW.test(c.text) && productiveClause(c.text) && !/(?:겠다고|려고|자고|고자|기로)$/.test(c.text.replace(/[.,]+$/, ''));
+      if (lex.STUDENT_VIEW.test(s.text.trim()) && !s.clauses.some(seenAct)) {
+        push('selfvoice', s.start, s.end, { penalty: 16, studentView: true, why: '학생 입장의 서술(~다짐함·~깨달음·~느낌)입니다. 교사가 본 행동으로 바꿔 주세요 — 예: ~에 대해 발표함, ~을 활동지에 기록함, ~하겠다는 포부를 밝힘.' });
         continue;
       }
       const studentAct = s.clauses.some((c) => c.type === '행동' || c.type === '사고');
@@ -1159,6 +1212,29 @@
           actions: [...new Set(choices.map((c) => (c.answer.kind === 'rewriteSentence' ? 'rewrite' : c.answer.kind)))],
         };
       }
+      case 'foreign':
+        return {
+          ...q,
+          prompt: issue.replacement === '한글 표기'
+            ? `‘${issue.matches[0]}’을(를) 한글로 바꿔 적을까요? 도서명·일반화된 용어면 그대로 두세요.`
+            : `‘${issue.matches[0]}’은(는) 학교 공통 지침의 대체어가 있습니다. ‘${issue.replacement}’(으)로 바꿀까요?`,
+          mode: 'choice',
+          choices: issue.replacement === '한글 표기'
+            ? [{ label: '한글로 고쳐 쓰기', answer: { kind: 'rewriteSentence' }, primary: true }, { label: '그대로 두기', answer: { kind: 'keep' } }]
+            : [
+              ...(issue.replacements || []).slice(0, 2).map((r, k) => ({ label: `‘${r}’(으)로 바꾸기`, answer: { kind: 'replace', replacement: r }, primary: k === 0 })),
+              { label: '그대로 두기', answer: { kind: 'keep' } },
+            ],
+          actions: issue.replacement === '한글 표기' ? ['rewrite', 'keep'] : ['replace', 'keep'],
+        };
+      case 'quote':
+        return {
+          ...q,
+          prompt: '둥근 따옴표를 직선 따옴표로 바꿀까요?',
+          mode: 'choice',
+          choices: [{ label: '직선 따옴표로 바꾸기', answer: { kind: 'replace' }, primary: true }, { label: '그대로 두기', answer: { kind: 'keep' } }],
+          actions: ['replace', 'keep'],
+        };
       case 'brandish':
         return {
           ...q,
@@ -1222,7 +1298,7 @@
   function topQuestions(auditResult, opts = {}, limit = 3) {
     const danger = auditResult.issues.filter((i) => i.grade === 'danger' && i.type !== 'overflow');
     const caution = auditResult.issues
-      .filter((i) => i.grade === 'caution' && i.type !== 'style' && i.type !== 'symbol')
+      .filter((i) => i.grade === 'caution' && i.type !== 'style' && i.type !== 'symbol' && i.type !== 'quote')
       .sort((a, b) => b.gain - a.gain || a.start - b.start)
       .slice(0, limit);
     if (caution.length < limit) {
@@ -1370,7 +1446,7 @@
       let after = text.slice(idx + issue.text.length);
       // 낱말 전체를 바꿀 때만 뒤따르는 조사를 맞춘다.
       // 맞춤법 교정처럼 낱말 일부만 바뀌는 경우(어의없+는)에는 건드리지 않는다.
-      const spelling = (issue.hits || []).some((h) => h.rule === 'typo');
+      const spelling = (issue.hits || []).some((h) => h.rule === 'typo') || issue.type === 'quote';
       const pm = !spelling && after.match(/^(으로|로|을|를|이|가|은|는|과|와)(?=\s|$|[.,])/);
       let replacement = rep;
       if (pm) {
@@ -1459,7 +1535,7 @@
     return res;
   }
 
-  const APPLY_ORDER = { forbidden: 0, brandish: 0, repeat: 1, longsent: 9, symbol: 1, exag: 1, future: 2, personality: 2, leap: 2, logic: 2, cliche: 2, vague: 2, knowledge: 3, selfvoice: 3, source: 4, evidence: 5, style: 6, listing: 7, growth: 7, overflow: 8 };
+  const APPLY_ORDER = { forbidden: 0, brandish: 0, repeat: 1, longsent: 9, symbol: 1, exag: 1, future: 2, personality: 2, leap: 2, logic: 2, foreign: 1, quote: 1, cliche: 2, vague: 2, knowledge: 3, selfvoice: 3, source: 4, evidence: 5, style: 6, listing: 7, growth: 7, overflow: 8 };
 
   /**
    * 한 학생의 여러 응답을 한꺼번에 적용. 지우는 처방 먼저, 문장을 닫거나 사실을 덧붙이는 처방은 나중에.
