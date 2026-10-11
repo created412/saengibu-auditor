@@ -314,6 +314,8 @@
       if (act === 'replace') return `🔁 ‘${issue.replacement}’(으)로 바꾸기`;
     }
     if (act === 'delete' && issue.type === 'exag') return '✂️ 강조어 빼기';
+    if (act === 'replace' && issue.type === 'logic' && issue.replacement) return `🔁 ‘${issue.replacement}’(으)로 바꾸기`;
+    if (act === 'keep' && issue.type === 'logic') return '✔ 사실임 · 그대로 두기';
     if (act === 'delete' && issue.type === 'symbol') return '✂️ 기호 지우기';
     if (act === 'delete' && (issue.type === 'source' || issue.type === 'knowledge' || issue.type === 'selfvoice')) return '✂️ 문장 삭제';
     if (act === 'delete' && issue.type === 'vague') return '✂️ 부사 빼기';
@@ -845,7 +847,7 @@
       { label: '분량 (상한 1,500 byte)', ...(a.bytes > lex.BYTE_LIMIT
         ? { value: `<b class="bad">${a.bytes.toLocaleString()} byte 초과</b>`, tone: 'fail' }
         : { value: `<b class="ok">여유 ${(lex.BYTE_LIMIT - a.bytes).toLocaleString()} byte</b>`, tone: 'pass' }) },
-      { label: '역량의 근거', ...mark(n(['evidence'])) },
+      { label: '역량의 근거 · 뜻의 어긋남', ...mark(n(['evidence', 'logic'])) },
       { label: '구체성 · 과장 · 상투 표현', ...mark(n(['vague', 'exag', 'cliche'])) },
       { label: '지식 서술 · 소감 어투 · 나열', ...mark(n(['knowledge', 'selfvoice', 'listing', 'growth'])) },
       { label: '미래 예측 · 인성 단정 · 비약 · 상호 의심', ...mark(n(['future', 'personality', 'leap', 'brandish'])) },

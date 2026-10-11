@@ -25,6 +25,7 @@
     future: { label: '근거 없는 미래 예측', criterion: 'exag', grade: 'caution', ref: '19쪽 5-가 · 95쪽' },
     personality: { label: '주관적 인성 평가', criterion: 'evidence', grade: 'caution', ref: '95쪽 · 117쪽 가' },
     leap: { label: '교과 개념 비약 · 과장 의심', criterion: 'exag', grade: 'caution', ref: '19쪽 5-가' },
+    logic: { label: '뜻이 어긋남 · 앞뒤 불일치', criterion: 'evidence', grade: 'caution', ref: '95쪽 · 117쪽 가' },
     cliche: { label: '상투 표현', criterion: 'dup', grade: 'caution', ref: '95쪽' },
     style: { label: '명사형 종결', criterion: null, grade: 'caution', ref: '30쪽' },
     symbol: { label: '특수문자·번호', criterion: null, grade: 'caution', ref: '30쪽' },
@@ -115,6 +116,16 @@
     let vague = 0;
     for (const p of lex.ABSTRACT_PATTERNS) { p.re.lastIndex = 0; vague += (text.match(p.re) || []).length; }
     return spec + 2 * proc + 2 * quotes - 1.5 * vague;
+  }
+
+  /** ‘읽고·보고·듣고·참여하고’처럼 접하기만 한 절은 역량의 근거가 아니다 — 무엇을 해냈는지(사고·산출)가 있어야 한다 */
+  // 절의 서술어(마지막 어절)로 판단한다 — '재판 기록을 읽고'의 '기록'은 명사이지 행동이 아니다
+  const PASSIVE_PREDICATE = /^(?:읽|보고$|보며$|본$|봄$|보면서$|보았|보던|보는$|듣|들으|들음|시청|참여|참관|방문|배우|배움|배운|접하|접함|경험|수강|관람|감상)/;
+  function productiveClause(t) {
+    const s = String(t).trim().replace(/[.,]+$/, '');
+    const last = s.split(/\s+/).pop() || '';
+    if (PASSIVE_PREDICATE.test(last)) return false;
+    return lex.THINK_VERBS.test(s) || lex.ACT_VERBS.test(s);
   }
 
   function skeletonOf(text) {
@@ -282,6 +293,45 @@
       });
     }
 
+    // ①-2 뜻의 어긋남 — 역량 이름과 적힌 행동이 다른 경우 (근거는 있는데 엉뚱한 근거). 근거 자체가 없는 문장은 ②가 맡는다
+    // (ⅰ) 역량 이름 ↔ 근거 행동: '리더십'이라 했는데 적힌 일은 '식을 구하고 계산함'뿐이면 평가가 지어낸 것으로 읽힌다
+    const bare = (t) => lex.COMPETENCY_EVIDENCE.reduce((x, o) => { o.claim.lastIndex = 0; return x.replace(o.claim, ' '); }, t);
+    const verbRe = new RegExp(`${lex.THINK_VERBS.source}|${lex.ACT_VERBS.source}`, 'g');
+    const checked = [];
+    for (const s of sentences) {
+      const prev = sentences[s.index - 1];
+      const near = [s, prev].filter(Boolean);
+      // 구체적인 행동·사고가 적혀 있을 때만 본다 — 아무 근거도 없는 문장은 '역량의 근거 부족'이 맡는다
+      if (!near.some((o) => o.clauses.some((c) => { const ct = bare(c.text); return (c.type === '행동' || c.type === '사고') && specificStems(ct).length && productiveClause(ct); }))) continue;
+      const ctx = bare(near.map((o) => o.text).join(' '));
+      for (const comp of lex.COMPETENCY_EVIDENCE) {
+        comp.claim.lastIndex = 0;
+        let m;
+        while ((m = comp.claim.exec(s.text))) {
+          if (!m[0]) { comp.claim.lastIndex++; continue; }
+          const start = s.start + m.index;
+          const end = start + m[0].length;
+          if (checked.some(([a, b]) => start < b && end > a)) continue;
+          checked.push([start, end]);
+          if (comp.ev.test(ctx)) continue;
+          if (overlaps(taken(), start, end)) continue;
+          const sentBare = bare(s.text);
+          // 행동에 맞는 역량 이름 — 근거어가 많이 맞은 순, 같으면 교과보다 일반 역량(협업·의사소통…)을 먼저
+          const others = lex.COMPETENCY_EVIDENCE
+            .map((o, k) => ({ o, k, n: o.key === comp.key ? 0 : (sentBare.match(new RegExp(o.ev.source, 'g')) || []).length }))
+            .filter((x) => x.n > 0)
+            .sort((x, y) => y.n - x.n || y.k - x.k)
+            .map((x) => x.o.name).slice(0, 3);
+          const acts = [...new Set(sentBare.match(verbRe) || [])].slice(0, 3);
+          push('logic', start, end, {
+            kind: 'mismatch', penalty: 24, deleteMode: 'tail', comp: comp.name, acts,
+            ...(others.length ? { mode: 'replace', matches: [m[0]], replacement: others[0], replacements: others } : {}),
+            why: `‘${m[0]}’${ko.josa(m[0], '이라고/라고').slice(m[0].length)} 적었지만, 이 문장에서 학생이 한 일(${acts.length ? acts.join('·') : '적힌 행동'})은 ${comp.name}의 근거가 되지 않습니다${others.length ? ` — ${others.join('·')}에 가깝습니다` : ''}. 역량 이름과 행동이 어긋나면 지어낸 평가로 읽힙니다.`,
+          });
+        }
+      }
+    }
+
     // ② 근거 없는 평가어
     for (const p of lex.EVAL_PATTERNS) {
       p.re.lastIndex = 0;
@@ -295,16 +345,17 @@
         const own = s.clauses.filter((c) => c.abs + c.text.length <= start || c.abs >= end).filter((c) => c.type !== '평가');
         // 근거로 인정하려면 그 절에 ‘무엇을’에 해당하는 구체어가 있어야 한다
         // (‘맨 앞자리에 앉아 듣는’ 같은 일반적 태도는 ‘능력이 뛰어나다’의 근거가 되지 못한다)
-        const ACT = new RegExp(lex.ACT_VERBS.source);
-        const THINK = new RegExp(lex.THINK_VERBS.source);
-        // ‘읽고·보고·듣고·참여하고’처럼 접하기만 한 절은 역량의 근거가 아니다 — 무엇을 해냈는지(사고·산출)가 있어야 한다
-        const PASSIVE = /^(?:[^가-힣]*[가-힣]+(?:을|를|에|에서|의)\s*)*(?:읽|보|봄|듣|들음|시청|참여|참관|방문|배우|배움|접하|경험|수강|들어|관람|감상)[가-힣]*[.,]?$/;
-        const productive = (t) => THINK.test(t) || (ACT.test(t) && !/^(?:읽|보|듣|시청|참여|참관|방문)$/.test((t.match(new RegExp(lex.ACT_VERBS.source)) || [''])[0]) && !PASSIVE.test(t.trim()));
+        const productive = productiveClause;
         const strong = (c) => (specificStems(c.text).length && productive(c.text) ? c.strength : 0);
         let best = Math.max(0, ...own.map(strong));
         // 사고력 평가만 바로 앞 문장의 근거를 이어받는다. '모범이 됨' 같은 태도 평가는 그 문장 안에 장면이 있어야 함
         if (prev && p.cat === 'thinking') best = Math.max(best, ...prev.clauses.filter((c) => c.type === '사고').map((c) => strong(c) * 0.8));
         if (best >= 5) continue;
+        // 평가한 역량과 같은 결의 근거(수학적 사고 ↔ 식·계산, 리더십 ↔ 이끎·조율)가 여러 절에 나뉘어 있으면 합쳐서 본다
+        const claimText = text.slice(start, end);
+        const ownText = own.filter((c) => strong(c) > 0).map((c) => c.text).join(' ');
+        const aligned = ownText && lex.COMPETENCY_EVIDENCE.some((o) => { o.claim.lastIndex = 0; const hit = o.claim.test(claimText); o.claim.lastIndex = 0; return hit && o.ev.test(ownText); });
+        if (aligned && own.filter((c) => strong(c) > 0).length >= 2 && own.reduce((acc, c) => acc + strong(c), 0) >= 3) continue;
         push('evidence', start, end, {
           cat: p.cat, deleteMode: p.deleteMode, penalty: p.cat === 'thinking' ? 30 : 20,
           why: p.cat === 'thinking'
@@ -469,6 +520,54 @@
         push('longsent', sent.start, sent.end, { penalty: 6, deleteMode: 'none',
           why: `한 문장이 ${sent.text.length}자입니다. 둘로 나누면 읽기 쉽고, 무엇을 했는지가 또렷해집니다.` });
       }
+    }
+
+    // ④-6 (ⅱ)·(ⅲ) 앞뒤 모순 · 수치 불일치 — (ⅰ) 역량 불일치는 ②보다 앞에서 본다
+    // (ⅱ) 부정 뒤 긍정: "임원을 하지는 않았지만 … 반장으로서"
+    lex.NEGATION.lastIndex = 0;
+    let nm;
+    while ((nm = lex.NEGATION.exec(text))) {
+      const noun = nm[1];
+      if (lex.GENERIC_WORDS.has(noun) || /^(?:하지|맡지|되지)/.test(noun)) continue;
+      const syn = lex.ROLE_SYNONYMS[noun];
+      const nounRe = syn ? syn.source : noun.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const later = new RegExp(`(?:${nounRe})${lex.ROLE_RESUME}`, 'g');
+      later.lastIndex = nm.index + nm[0].length;
+      const lm = later.exec(text);
+      if (!lm) continue;
+      const s1 = sentenceAt(sentences, nm.index);
+      const s2 = sentenceAt(sentences, lm.index);
+      if (!s1 || !s2 || lex.GROWTH_CUE.test(s1.text) || lex.GROWTH_CUE.test(s2.text)) continue;
+      const start = lm.index;
+      const end = lm.index + lm[0].length;
+      if (overlaps(taken(), start, end)) continue;
+      push('logic', start, end, {
+        kind: 'contra', criterion: 'exag', ref: '19쪽 5-가', penalty: 16, deleteMode: 'none', before: nm[0].trim(),
+        why: `앞에서 ‘${nm[0].trim()}’이라 했는데 여기서는 ‘${lm[0]}’입니다. 둘 중 하나는 사실이 아니며, 그대로 두면 기록 전체의 신뢰를 잃습니다.`,
+      });
+    }
+    // (ⅲ) 수치 불일치: "보고서 3편 … 보고서 2편"
+    const counts = new Map();
+    lex.COUNT.lastIndex = 0;
+    let cm;
+    while ((cm = lex.COUNT.exec(text))) {
+      if (cm.index > 0 && /[0-9A-Za-z가-힣]/.test(text[cm.index - 1])) continue; // '1학기 3회'의 '학기'처럼 낱말 한가운데면 통과
+      const noun = cm[1];
+      const n = lex.COUNT_WORDS[cm[2]] || Number(cm[2]);
+      const unit = cm[3];
+      const tail = cm[0].match(/(\d+|한|두|세|네|다섯|여섯|일곱|여덟|아홉|열)\s*(?:회|차례|번|편|권|명|개|시간|쪽|가지|종|차시|분|주)$/)[0];
+      const key = `${noun}|${lex.COUNT_UNIT_CLASS[unit] || unit}`;
+      const first = counts.get(key);
+      if (!first) { counts.set(key, { n, raw: `${noun} ${tail}`, tail }); continue; }
+      if (first.n === n) continue;
+      const start = cm.index + cm[0].length - tail.length;
+      const end = cm.index + cm[0].length;
+      if (overlaps(taken(), start, end)) continue;
+      push('logic', start, end, {
+        kind: 'count', criterion: 'exag', ref: '19쪽 5-가', penalty: 12, deleteMode: 'none', before: first.raw,
+        mode: 'replace', matches: [tail], replacement: first.tail, replacements: [first.tail],
+        why: `앞에서 ‘${first.raw}’이라 했는데 여기서는 ‘${noun} ${tail}’입니다. 같은 대상이라면 수가 맞지 않습니다.`,
+      });
     }
 
     // ⑤ 상투 표현 (긴 표현부터, 겹치면 생략)
@@ -744,7 +843,7 @@
   function wellFormed(s) {
     const t = String(s).replace(/[\s.]+$/, '').trim();
     if (t.length < 8) return false;
-    if (/^(?:을|를|이|가|은|는|와|과|의|에|에서|으로|로|도|만|부터|까지)(?:\s|$)/.test(t)) return false;
+    if (/(?:^|\s)(?:을|를|이|가|은|는|와|과|의|에|에서|으로|로|도|만|부터|까지)(?=\s|$)/.test(t)) return false;
     const last = t.split(/\s+/).pop();
     return ko.isNominalEnding(last) || /〕$/.test(t) || /함|음|임/.test(last);
   }
@@ -867,7 +966,7 @@
       const tries = [];
       if (issue.mode === 'replace') (issue.replacements || [issue.replacement]).slice(0, 2).forEach((r) => tries.push({ kind: 'replace', replacement: r }));
       if (issue.type === 'style') tries.push({ kind: 'restyle' });
-      tries.push({ kind: 'delete' });
+      if (issue.type !== 'logic') tries.push({ kind: 'delete' });
       for (const ans of tries) {
         try {
           // 문장 하나만 넘겨 그 문장의 수정안을 얻는다
@@ -1019,6 +1118,47 @@
           ],
           actions: ['rewrite', 'compose', 'delete'],
         };
+      case 'logic': {
+        if (issue.kind === 'contra') {
+          return {
+            ...q,
+            prompt: `앞에서 ‘${issue.before}’이라 했는데 여기서는 ‘${issue.text}’입니다. 어느 쪽이 사실인가요?`,
+            mode: 'choice',
+            choices: [
+              { label: '이 문장을 사실대로 고쳐 쓰기', answer: { kind: 'rewriteSentence' }, primary: true },
+              { label: '앞 문장이 틀림 → 그대로 두고 앞을 고치기', answer: { kind: 'keep' } },
+            ],
+            actions: ['rewrite', 'keep'],
+          };
+        }
+        if (issue.kind === 'count') {
+          return {
+            ...q,
+            prompt: `앞에서 ‘${issue.before}’이라 했는데 여기서는 ‘${issue.text}’입니다. 같은 대상인가요?`,
+            mode: 'choice',
+            choices: [
+              { label: `같은 대상 → ‘${issue.replacement}’(으)로 맞추기`, answer: { kind: 'replace' }, primary: true },
+              { label: '앞의 수가 틀림 → 이 문장 고쳐 쓰기', answer: { kind: 'rewriteSentence' } },
+              { label: '다른 대상임 → 그대로 두기', answer: { kind: 'keep' } },
+            ],
+            actions: ['replace', 'rewrite', 'keep'],
+          };
+        }
+        const acts = issue.acts && issue.acts.length ? issue.acts.join('·') : '적힌 행동';
+        const choices = [];
+        if (issue.replacements && issue.replacements.length) {
+          issue.replacements.slice(0, 2).forEach((r, k) => choices.push({ label: `행동에 맞게 ‘${r}’(으)로 바꾸기`, answer: { kind: 'replace', replacement: r }, primary: k === 0 }));
+        }
+        choices.push({ label: `‘${issue.text}’을 보인 장면을 넣어 고쳐 쓰기`, answer: { kind: 'rewriteSentence' }, primary: !choices.length });
+        choices.push({ label: '그대로 두기', answer: { kind: 'keep' } });
+        return {
+          ...q,
+          prompt: `‘${issue.text}’${ko.josa(issue.text, '이라고/라고').slice(issue.text.length)} 적었지만 적힌 행동(${acts})은 ${issue.comp}의 근거가 아닙니다. 역량 이름을 행동에 맞출까요, 그 역량을 보인 장면을 넣을까요?`,
+          mode: 'choice',
+          choices,
+          actions: [...new Set(choices.map((c) => (c.answer.kind === 'rewriteSentence' ? 'rewrite' : c.answer.kind)))],
+        };
+      }
       case 'brandish':
         return {
           ...q,
@@ -1319,7 +1459,7 @@
     return res;
   }
 
-  const APPLY_ORDER = { forbidden: 0, brandish: 0, repeat: 1, longsent: 9, symbol: 1, exag: 1, future: 2, personality: 2, leap: 2, cliche: 2, vague: 2, knowledge: 3, selfvoice: 3, source: 4, evidence: 5, style: 6, listing: 7, growth: 7, overflow: 8 };
+  const APPLY_ORDER = { forbidden: 0, brandish: 0, repeat: 1, longsent: 9, symbol: 1, exag: 1, future: 2, personality: 2, leap: 2, logic: 2, cliche: 2, vague: 2, knowledge: 3, selfvoice: 3, source: 4, evidence: 5, style: 6, listing: 7, growth: 7, overflow: 8 };
 
   /**
    * 한 학생의 여러 응답을 한꺼번에 적용. 지우는 처방 먼저, 문장을 닫거나 사실을 덧붙이는 처방은 나중에.
