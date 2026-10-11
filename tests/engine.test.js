@@ -430,7 +430,7 @@ test('사전에 없는 ‘○○ 앱’은 상호명 의심(주의)으로 띄운
   const b = a.caution.find((i) => i.type === 'brandish');
   assert.ok(b, '상호명 의심 미검출');
   assert.equal(E.buildQuestion(b, a).mode, 'choice');
-  assert.match(E.applyAnswer(a.text, b, { kind: 'replace' }).text, /모바일 앱/);
+  assert.match(E.applyAnswer(a.text, b, { kind: 'replace' }).text, /관련 서비스|모바일 앱/);
   // 일반어가 머리인 ‘앱’은 건드리지 않는다
   ['학습 앱을 활용하여 어휘를 정리함.', '영어 단어 암기 앱을 매일 사용함.',
     '출석 체크 앱을 직접 만들어 봄.', '미세먼지 측정 앱을 제작함.',
@@ -446,4 +446,54 @@ test('내 사전: 교사가 넣은 이름을 그다음 감사부터 잡는다', 
   assert.match(E.applyAnswer(t, a.danger[0], { kind: 'replace' }).text, /^보드게임 앱으로/);
   E.setUserBrands([]); // 지우면 원래대로
   assert.equal(E.audit(t).danger.length, 0);
+});
+
+test('타 학생 실명·개인정보·진학 희망은 위험', () => {
+  const name = E.audit('친구 김민수와 함께 역할극을 준비함. 짝꿍 박서연의 풀이를 보고 자신의 풀이를 고침.');
+  assert.equal(name.danger.filter((i) => i.titles.includes('타 학생 실명')).length, 2);
+  let t = name.text;
+  name.danger.filter((i) => i.mode === 'replace').forEach((i) => { t = E.applyAnswer(t, i, { kind: 'replace' }).text; });
+  assert.doesNotMatch(t, /김민수|박서연/);
+  assert.match(t, /친구와 함께|짝꿍의 풀이/);
+  // 역사 인물·작가는 실명으로 잡지 않는다
+  assert.equal(E.audit('이순신의 해전 기록을 읽고 윤동주의 시를 해석함.').danger.length, 0);
+  const priv = E.audit('연락처 010-1234-5678로 설문을 받고 abc@school.kr로 과제를 제출함.');
+  assert.equal(priv.danger.filter((i) => i.titles.includes('개인정보')).length, 2);
+  const asp = E.audit('의대 진학을 희망하며 생명과학 탐구에 매진함. 컴퓨터공학과에 진학하기를 목표로 코딩을 익힘.');
+  assert.equal(asp.danger.filter((i) => i.titles.includes('진학 희망(대학·학과)')).length, 2);
+});
+
+test('사전에 없는 도구 이름은 쓰임새로 의심하고, 일반어·장소는 건드리지 않는다', () => {
+  ['밀리의서재에서 책을 골라 읽음.', 'Padlet에 의견을 게시함.', '젭(ZEP)에서 전시회를 열어 작품을 소개함.', '밴드앱에 과제를 올림.']
+    .forEach((t) => {
+      const a = E.audit(t);
+      assert.ok(a.danger.length || a.caution.some((i) => i.type === 'brandish'), `놓침: ${t}`);
+    });
+  ['포스터를 제작함.', '동아리에서 활동하며 로봇을 조립함.', '보고서를 작성하고 영상을 편집하여 발표함.',
+    '교실에서 토론에 참여하고 도서관에서 자료를 찾음.', '텃밭에서 작물을 기르며 생장 일지를 기록함.',
+    '통계 자료를 활용하여 인구 변화를 분석함.', '반어법을 활용하여 화자의 태도를 해석함.',
+    '인터넷에서 관련 기사를 검색하여 출처를 비교함.', '학생이 "Hello, world!"를 출력하는 코드를 작성함.',
+  ].forEach((t) => assert.ok(!E.audit(t).caution.some((i) => i.type === 'brandish'), `오탐: ${t}`));
+});
+
+test('같은 문장 반복·너무 긴 문장·문장부호 앞 공백', () => {
+  const rep = E.audit('조선 후기 상업 발달을 조사함. 조선 후기 상업 발달을 조사함.');
+  const r = rep.caution.find((i) => i.type === 'repeat');
+  assert.ok(r);
+  assert.equal(E.applyAnswer(rep.text, r, { kind: 'delete' }).text, '조선 후기 상업 발달을 조사함.');
+  const long = E.audit(`${'통계 자료를 바탕으로 인구 변화를 분석하고 '.repeat(8)}원인을 설명함.`);
+  assert.ok(long.caution.some((i) => i.type === 'longsent'));
+  assert.ok(!E.audit('통계 자료를 바탕으로 인구 변화를 분석하고 원인을 설명함.').caution.some((i) => i.type === 'longsent'));
+  const sp = E.audit('수업 시간에 집중하여 설명을 들음 . 과제를 제출함.');
+  const typo = sp.danger.find((i) => i.titles.includes('맞춤법·어휘 오류'));
+  assert.ok(typo);
+  assert.match(E.applyAnswer(sp.text, typo, { kind: 'replace' }).text, /들음\. 과제/);
+});
+
+test('견고성: 빈 글·기호·영문·긴 글에서 터지지 않는다', () => {
+  ['', '...!!!???', 'The quick brown fox.', '12345', 'ㅋㅋㅋ', '가. '.repeat(400)].forEach((t) => {
+    const a = E.audit(t);
+    a.issues.forEach((i) => assert.ok(E.buildQuestion(i, a).prompt));
+    assert.ok(Number.isFinite(a.overall));
+  });
 });

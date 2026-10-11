@@ -848,8 +848,8 @@
       { label: '역량의 근거', ...mark(n(['evidence'])) },
       { label: '구체성 · 과장 · 상투 표현', ...mark(n(['vague', 'exag', 'cliche'])) },
       { label: '지식 서술 · 소감 어투 · 나열', ...mark(n(['knowledge', 'selfvoice', 'listing', 'growth'])) },
-      { label: '미래 예측 · 인성 단정 · 개념 비약', ...mark(n(['future', 'personality', 'leap'])) },
-      { label: '명사형 종결 · 기호 표기', ...mark(n(['style', 'symbol'])) },
+      { label: '미래 예측 · 인성 단정 · 비약 · 상호 의심', ...mark(n(['future', 'personality', 'leap', 'brandish'])) },
+      { label: '표기 · 반복 · 긴 문장', ...mark(n(['style', 'symbol', 'repeat', 'longsent'])) },
     ];
   }
 
@@ -1522,7 +1522,7 @@
       case 'dict-add': {
         const w = ($('#dictWord').value || '').trim();
         const alt = ($('#dictAlt').value || '').trim();
-        if (w.length < 2) { toast('잡을 이름을 두 글자 이상 적어 주세요.'); return; }
+        if (!w) { toast('잡을 이름을 적어 주세요.'); return; }
         const list = dictLoad();
         if (list.some((d) => d.word === w)) { toast('이미 추가된 말입니다.'); return; }
         list.unshift({ word: w, alt: alt || '관련 서비스' });
@@ -1531,6 +1531,32 @@
         $('#dictWord').value = '';
         $('#dictAlt').value = '';
         toast(`‘${w}’을(를) 내 사전에 넣었습니다. 다음 감사부터 잡습니다.`);
+        if (S.stage === 'report') { reauditSingle(); render(); }
+        break;
+      }
+      case 'dict-export': {
+        const list = dictLoad();
+        const text = list.map((d) => `${d.word} → ${d.alt}`).join('\n');
+        const box = $('#dictIo');
+        box.hidden = false; box.value = text; box.select();
+        try { await navigator.clipboard.writeText(text); toast('내 사전을 복사했습니다. 동료 선생님께 붙여 넣어 주시면 됩니다.'); } catch (e) { toast('아래 칸의 내용을 복사해 주세요.'); }
+        break;
+      }
+      case 'dict-import': {
+        const box = $('#dictIo');
+        if (box.hidden) { box.hidden = false; box.value = ''; box.placeholder = '한 줄에 하나 — 이름 → 바꿀 말'; box.focus(); return; }
+        const lines = (box.value || '').split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+        const list = dictLoad();
+        let added = 0;
+        lines.forEach((l) => {
+          const m = l.split(/\s*(?:→|->|=>|,|\t)\s*/);
+          const word = (m[0] || '').trim();
+          if (!word || list.some((d) => d.word === word)) return;
+          list.unshift({ word, alt: (m[1] || '').trim() || '관련 서비스' });
+          added++;
+        });
+        dictSave(list); renderDict(); box.hidden = true;
+        toast(added ? `${added}개를 내 사전에 넣었습니다.` : '새로 넣을 말이 없습니다.');
         if (S.stage === 'report') { reauditSingle(); render(); }
         break;
       }

@@ -20,6 +20,8 @@
     vague: { label: '추상적 표현', criterion: 'specific', grade: 'caution', ref: '95쪽' },
     exag: { label: '과장 표현', criterion: 'exag', grade: 'caution', ref: '19쪽 5-가' },
     brandish: { label: '상호명 의심 — 확인 필요', criterion: 'exag', grade: 'caution', ref: '19쪽 3-타' },
+    repeat: { label: '같은 문장 반복', criterion: 'dup', grade: 'caution', ref: '95쪽' },
+    longsent: { label: '너무 긴 문장', criterion: 'specific', grade: 'caution', ref: '30쪽' },
     future: { label: '근거 없는 미래 예측', criterion: 'exag', grade: 'caution', ref: '19쪽 5-가 · 95쪽' },
     personality: { label: '주관적 인성 평가', criterion: 'evidence', grade: 'caution', ref: '95쪽 · 117쪽 가' },
     leap: { label: '교과 개념 비약 · 과장 의심', criterion: 'exag', grade: 'caution', ref: '19쪽 5-가' },
@@ -398,24 +400,70 @@
         why: `‘${hit[0]}’을 스스로 깨우쳤다고만 적혀 있고, 무엇을 어떻게 해서 알게 되었는지가 없습니다. 근거가 없으면 과장·허위 서술로 읽힙니다.` });
     }
 
-    // ④-4 목록에 없는 상호 의심 ('○○ 앱', 주식회사 ○○)
+    // ④-4 목록에 없는 상호 의심 — '○○ 앱', 주식회사 ○○, 도구 사용 틀의 머리말, 한글(라틴) 병기
+    const quotedSpans = [];
+    text.replace(/‘[^’]*’|“[^”]*”|'[^']*'|"[^"]*"|「[^」]*」|『[^』]*』|〈[^〉]*〉|《[^》]*》/g, (q, at) => { quotedSpans.push([at, at + q.length]); return q; });
+    const inQuote = (a, b) => quotedSpans.some(([qs, qe]) => a >= qs && b <= qe);
+    const genericHead = (h) => lex.BRAND_GENERIC_HEAD.test(h) || lex.GENERIC_WORDS.has(h) || lex.HEAD_SUFFIX_GENERIC.test(h) || lex.PLACE_GENERIC.test(h)
+      || /(?:에서|에게|에|으로|로|의|을|를|은|는|와|과|도|만|부터|까지|하는|라는|이라는|했|된)$/.test(h);
+    const suspect = (start, end, word, why) => {
+      if (overlaps(taken(), start, end) || inQuote(start, end)) return;
+      push('brandish', start, end, {
+        penalty: 8, mode: 'replace', matches: [word],
+        replacement: '관련 서비스', replacements: ['관련 서비스', '온라인 도구', '모바일 앱', '응용 프로그램'],
+        why,
+      });
+    };
     for (const re of [lex.BRANDISH, lex.COMPANY_MARK]) {
       re.lastIndex = 0;
       let m;
       while ((m = re.exec(text))) {
         if (!m[0].trim()) { re.lastIndex++; continue; }
         const head = (m[1] || m[0]).trim();
-        if (lex.BRAND_GENERIC_HEAD.test(head) || lex.GENERIC_WORDS.has(head)) continue;
-        if (/(?:에서|에게|에|으로|로|의|을|를|은|는|와|과|도|만|부터|까지|하는|라는)$/.test(head)) continue; // 조사까지 먹은 경우
-        if (lex.EDU_ALLOW.test(m[0])) continue;
-        const start = m.index;
-        const end = m.index + m[0].trimEnd().length;
-        if (overlaps(taken(), start, end)) continue; // 이미 상호명으로 잡혔으면 넘어간다
-        push('brandish', start, end, {
-          penalty: 10, mode: 'replace', matches: [m[0].trim()],
-          replacement: '모바일 앱', replacements: ['모바일 앱', '온라인 서비스', '응용 프로그램'],
-          why: '사전에 없는 이름이지만 상호명으로 보입니다. 상호명이면 상위 일반어로 바꾸고(기재요령 19쪽 3-타), 아니면 그대로 두세요.',
-        });
+        if (genericHead(head) || lex.EDU_ALLOW.test(m[0])) continue;
+        suspect(m.index, m.index + m[0].trimEnd().length, m[0].trim(),
+          '사전에 없는 이름이지만 상호명으로 보입니다. 상호명이면 상위 일반어로 바꾸고(기재요령 19쪽 3-타), 아니면 그대로 두세요.');
+      }
+    }
+    // 도구 사용 틀: ○○을 활용하여 / ○○에서 검색 / ○○로 제작
+    lex.TOOL_FRAME.lastIndex = 0;
+    let fm;
+    while ((fm = lex.TOOL_FRAME.exec(text))) {
+      const head = fm[1];
+      const latin = /^[A-Za-z]/.test(head);
+      if (latin) {
+        if (lex.LATIN_ALLOW.test(head) || head.length < 3 || /^[A-Z0-9]+$/.test(head)) continue; // 약어·단위는 통과
+      } else {
+        if (genericHead(head)) continue;
+        if (head.replace(/[^가-힣]/g, '').length < 3) continue; // 두 글자 한글 이름은 사전에만 맡긴다(오탐 방지)
+        if (lex.EDU_ALLOW.test(head)) continue;
+      }
+      suspect(fm.index, fm.index + head.length, head,
+        `‘${head}’은(는) 사전에 없지만 도구·서비스 이름처럼 쓰였습니다. 상호명이면 상위 일반어로 바꾸고, 아니면 그대로 두세요.`);
+    }
+    // 한글(라틴) 병기: 젭(ZEP), 노션(Notion)
+    lex.PAREN_LATIN.lastIndex = 0;
+    let pm;
+    while ((pm = lex.PAREN_LATIN.exec(text))) {
+      if (lex.LATIN_ALLOW.test(pm[2]) || genericHead(pm[1])) continue;
+      suspect(pm.index, pm.index + pm[0].length, pm[0],
+        '한글과 영문을 나란히 적은 이름은 대개 서비스·제품명입니다. 상호명이면 상위 일반어로 바꿔 주세요.');
+    }
+
+    // ④-5 같은 문장 반복 · 너무 긴 문장
+    const seen = new Map();
+    for (const sent of sentences) {
+      const key = sent.text.replace(/\s+/g, ' ').replace(/[.!?]+$/, '').trim();
+      if (key.length < 12) continue;
+      if (seen.has(key)) {
+        if (!overlaps(taken(), sent.start, sent.end)) {
+          push('repeat', sent.start, sent.end, { penalty: 12, deleteMode: 'sentence',
+            why: '앞에 나온 문장과 같습니다. 중복은 지우거나 다른 내용으로 바꿔 주세요.' });
+        }
+      } else seen.set(key, sent.start);
+      if (sent.text.length > 170 && !overlaps(taken(), sent.start, sent.start + 1)) {
+        push('longsent', sent.start, sent.end, { penalty: 6, deleteMode: 'none',
+          why: `한 문장이 ${sent.text.length}자입니다. 둘로 나누면 읽기 쉽고, 무엇을 했는지가 또렷해집니다.` });
       }
     }
 
@@ -608,7 +656,9 @@
       const w = String(word || '').trim();
       if (!w) return;
       const safe = w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      const term = [new RegExp(safe, 'g'), [String(alt || '').trim() || '관련 서비스']];
+      // 한 글자 이름(젭 등)은 낱말로 홀로 설 때만 잡는다 — 다른 낱말 속에서 걸리지 않게
+      const body = w.length === 1 ? `(?<![가-힣A-Za-z])${safe}(?=$|[^가-힣A-Za-z]|에서|에|을|를|로|으로|의|은|는|이|가|와|과)` : safe;
+      const term = [new RegExp(body, 'g'), [String(alt || '').trim() || '관련 서비스']];
       userBrands.push(term);
       lex.BRAND_TERMS.unshift(term);
     });
@@ -975,6 +1025,28 @@
           ],
           actions: ['replace', 'keep', 'delete'],
         };
+      case 'repeat':
+        return {
+          ...q,
+          prompt: '앞 문장과 같은 문장입니다. 지울까요?',
+          mode: 'choice',
+          choices: [
+            { label: '중복 문장 지우기', answer: { kind: 'delete' }, primary: true },
+            { label: '다른 내용으로 고쳐 쓰기', answer: { kind: 'rewriteSentence' } },
+          ],
+          actions: ['delete', 'rewrite', 'compose'],
+        };
+      case 'longsent':
+        return {
+          ...q,
+          prompt: '문장이 깁니다. 둘로 나누어 고쳐 쓸까요?',
+          mode: 'choice',
+          choices: [
+            { label: '나누어 고쳐 쓰기', answer: { kind: 'rewriteSentence' }, primary: true },
+            { label: '그대로 두기', answer: { kind: 'keep' } },
+          ],
+          actions: ['rewrite', 'keep'],
+        };
       case 'source':
         return {
           ...q,
@@ -1242,7 +1314,7 @@
     return res;
   }
 
-  const APPLY_ORDER = { forbidden: 0, brandish: 0, symbol: 1, exag: 1, future: 2, personality: 2, leap: 2, cliche: 2, vague: 2, knowledge: 3, selfvoice: 3, source: 4, evidence: 5, style: 6, listing: 7, growth: 7, overflow: 8 };
+  const APPLY_ORDER = { forbidden: 0, brandish: 0, repeat: 1, longsent: 9, symbol: 1, exag: 1, future: 2, personality: 2, leap: 2, cliche: 2, vague: 2, knowledge: 3, selfvoice: 3, source: 4, evidence: 5, style: 6, listing: 7, growth: 7, overflow: 8 };
 
   /**
    * 한 학생의 여러 응답을 한꺼번에 적용. 지우는 처방 먼저, 문장을 닫거나 사실을 덧붙이는 처방은 나중에.

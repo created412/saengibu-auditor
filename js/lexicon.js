@@ -182,6 +182,7 @@
     [/구지(?=\s)/g, ['굳이']],
     [/인제(?=\s*(?:가\s*될|가\s*되|로\s*성장|가\s*됨|가\s*되어))/g, ['인재']],
     [/지안(?=고|아|았|은|는)/g, ['지 않']],
+    [/[가-힣A-Za-z0-9)]\s+[.,!?](?=\s|$)/g, null], // ‘들음 .’ — 문장부호 앞 공백
     [/[ㄱ-ㅎㅏ-ㅣ]{1,}/g, null],          // 자모만 남은 글자
     [/([가-힣])\1{3,}/g, null],           // 같은 글자 네 번 이상 반복
   ];
@@ -197,14 +198,43 @@
   const BRANDISH = /([가-힣A-Za-z][가-힣A-Za-z0-9]{1,11})\s*(?:어플리케이션|어플|앱)(?=[\s.,)]|$|을|를|이|가|은|는|으로|로|에서|에|와|과|의|도|만)/g;
   const COMPANY_MARK = /(?:\(주\)|㈜|주식회사)\s*[가-힣A-Za-z0-9]{2,12}|[가-힣A-Za-z0-9]{2,12}\s*(?:주식회사|Inc\.?|Corp\.?)/g;
 
+
+  /**
+   * 사전에 없는 이름을 잡는 두 번째 그물 — ‘○○을 활용하여 / ○○에서 검색 / ○○로 제작’ 같은
+   * 도구 사용 틀의 머리말이 일반어가 아니면 상호로 의심한다. 라틴 문자 이름(Notion, Padlet)도 같은 틀로 본다.
+   */
+  const TOOL_FRAME = /([가-힣A-Za-z][가-힣A-Za-z0-9·.]{1,11})(?:\((?:[A-Za-z]{2,12})\))?(?:(?:을|를)\s*(?:활용|이용|사용|검색|시청|구독|구매|주문|설치|실행|켜)|(?:로|으로)\s*(?:제작|편집|촬영|검색|만들|작성|정리|기록|공유|제출|조사|분석|측정|계산|그리|표현|발표|학습|공부|연습|번역|촬영|녹음|시청|구매|결제|주문|송금|이체|소통|대화|협업)|(?:에서|에)\s*(?:[가-힣]{1,6}[을를]\s*)?(?:검색|가입|접속|결제|구매|주문|시청|구독|업로드|게시|제출|공유|기록|읽|보|듣|빌|골|찾|참여|신청|등록|예약|거래|판매|구입|활동|작성|제작))/g;
+  const PAREN_LATIN = /([가-힣]{1,8})\(([A-Za-z][A-Za-z0-9.]{1,12})\)/g;
+  // 머리말이 이런 꼴이면 일반 명사로 본다
+  const HEAD_SUFFIX_GENERIC = /(?:자료|도구|기기|장비|장치|기구|프로그램|사이트|플랫폼|서비스|방법|방식|기법|기능|기술|재료|사전|교재|교과서|책|영상|매체|카드|지도|그래프|표|앱|어플|소프트웨어|언어|공식|이론|모형|모델|실험|시스템|검색|인터넷|컴퓨터|노트북|태블릿|스마트폰|휴대폰|카메라|계산기|현미경|온도계|저울|자|각도기|센서|로봇|키트|보드|회로|전지|배터리|거울|렌즈|프리즘|풍선|병|상자|종이|필름|점토|물감|붓|칼|가위|실|끈|봉지|통|판|막대|추|용수철|진자|용액|시약|약품|가루|원소|이온|분자|세포|조직|식물|동물|곤충|씨앗|흙|물|공기|빛|소리|열|전기|자석|법|성|학|론|식|체|형|도|율|량|제|술|력|화|성|관|소|실|장|구|부|과|원|지|물|류|품|기|어|문|화|사|가|자|감|점|선|면|색|음|수|값|항|식|해|근|표|각|변|수열|함수|방정식|부등식|확률|통계|도형|벡터|행렬|집합|명제|극한|미분|적분|사료|기록|문헌|연표|지명|인물|사건|제도|정책|사상|종교|문화|예술|문학|시|소설|수필|희곡|시조|가사|판소리|민요|설화|신화|전설|문장|단어|어휘|문법|발음|독해|작문|회화|듣기|말하기|읽기|쓰기)$/;
+  const PLACE_GENERIC = /^(?:동아리|교실|실험실|과학실|음악실|미술실|강당|체육관|운동장|도서관|복도|급식실|가정|집|마을|지역|사회|국가|세계|학급|학교|교내|교외|온라인|오프라인|수업|모둠|조별|발표회|축제|행사|현장|박물관|미술관|과학관|공원|시장|거리|농장|공장|회사|병원|관공서|시청|구청|주민센터|도서실|컴퓨터실|방송실|교무실|상담실|보건실|기숙사|식당|카페|매점|문구점|서점|극장|영화관|경기장|수영장|바다|산|강|하천|숲|들판|밭|논|텃밭|화단|교정|학교숲|교과서|참고서|문제집|사전|백과사전|신문|잡지|방송|뉴스|다큐|영화|드라마|소설|시집|만화|웹툰|게임|음악|노래|악보|그림|사진|지도|도표|그래프|표|통계|설문|면담|인터뷰|관찰|실험|실습|견학|답사|탐방|봉사|캠페인|프로젝트|공모|발표|토론|토의|회의|상담|멘토링|튜터링|스터디|독서|글쓰기|일기|보고서|포트폴리오|노트|공책|메모장|달력|시간표|계획표|체크리스트)$/;
+  const LATIN_ALLOW = /^(?:AI|ML|LLM|DNA|RNA|ATP|pH|CO2|O2|H2O|IT|ICT|SNS|OTT|GPS|DIY|USB|LED|CPU|GPU|HTML|CSS|SQL|API|URL|QR|VR|AR|XR|MR|IoT|GDP|GNP|TV|PC|OS|3D|2D|4K|HD|LTE|5G|PDF|JPG|PNG|MP3|MP4|UX|UI|R&D|ESG|SDGs|HTTP|HTTPS|Python|Java|C|C\+\+|JavaScript|HTML5|UN|EU|NATO|WTO|FTA|GMO|LPG|LNG|CCTV|ATM|QRcode|BTS|KBS|MBC|SBS|EBS|YTN|JTBC|ISBN|PT|PPT|NEIS|STEAM|STEM|PBL|TED|SF|RPG|FPS|MVP|VIP|OK|No|Yes|vs|etc|e\.g|i\.e|cf|ppm|kg|km|cm|mm|ml|mg|Hz|dB|kcal|sin|cos|tan|log|ln|exp|max|min|AM|PM|BC|AD)$/i;
+
   /**
    * 위험 규칙. mode: clause(해당 절 삭제) / replace(대체어로 교체).
    * needs: 같은 문장에 있어야 발동하는 맥락, filter(m, sentence): false면 제외, allow: 매치가 이 패턴이면 허용
    */
   const DANGER_RULES = [
     { id: 'typo', title: '맞춤법·어휘 오류', ref: '기재 원칙 — 정확한 기록', terms: TYPO_TERMS, mode: 'replace',
-      replace: (w) => TYPO_MAP[w] || (/^(?:할|될|갈|볼|알|쓸|들|풀|읽을|찾을|만들|배울|나눌)수$/.test(w) ? `${w.slice(0, -1)} 수` : undefined),
+      replace: (w) => TYPO_MAP[w] || (/^(?:할|될|갈|볼|알|쓸|들|풀|읽을|찾을|만들|배울|나눌)수$/.test(w) ? `${w.slice(0, -1)} 수` : /\s+[.,!?]$/.test(w) ? w.replace(/\s+/g, '') : undefined),
       why: '맞춤법·어휘가 틀리면 기록 전체의 신뢰가 떨어집니다. 바른 표기로 고쳐 주세요.' },
+    { id: 'person', title: '타 학생 실명', ref: '개인정보 — 다른 학생의 이름',
+      re: /(?:친구|짝꿍|짝|학우|동료|후배|선배|급우|같은\s*반)\s*(?:인\s*)?([가-힣]{3})(?=와|과|의|이|가|을|를|에게|는|은|,|\s|$)|([가-힣]{3})\s*(?:학생|친구)(?=과|와|에게|의|이|을|를|,|\s|$)/g,
+      filter: (m) => { const n = m[1] || m[2]; return !!n && SURNAMES.includes(n[0]) && !NOT_NAMES.test(n) && !/^(?:학생|친구|모둠|발표|토론|활동|수업|과제|자료|의견|질문|역할|실험|관찰|조사|정리|이해|분석|비교|설명|발견|제안|해결|참여|협력|소통|공유|생각|주장|근거|결과|과정|문제|내용|방법|경우|사람|자신|서로|함께|모두|각자|누구)$/.test(n); },
+      mode: 'replace', replace: (w) => w.replace(/\s*(?:인\s*)?[가-힣]{3}$/, '').replace(/^[가-힣]{3}\s*/, '다른 '),
+      altReplacements: ['친구', '모둠원'],
+      why: '다른 학생의 이름은 기재할 수 없습니다. 역할(친구·모둠원·짝)로 바꿔 적어 주세요.' },
+    { id: 'privacy', title: '개인정보', ref: '개인정보 보호 — 연락처·번호',
+      terms: [
+        [/0\d{1,2}[-.\s]?\d{3,4}[-.\s]?\d{4}/g, ['연락처']],
+        [/\d{6}[-\s]?[1-4]\d{6}/g, ['(주민등록번호 삭제)']],
+        [/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g, ['이메일']],
+      ],
+      mode: 'replace',
+      why: '전화번호·주민등록번호·이메일 같은 개인정보는 기재할 수 없습니다.' },
+    { id: 'aspiration', title: '진학 희망(대학·학과)', ref: '진로희망 — 세특에 기재 불가',
+      re: /(?:[가-힣]+(?:학과|학부|전공)|의대|치대|한의대|약대|수의대|간호대|사관학교|경찰대|교대|로스쿨|의학과|대학원)(?:에|로|으로)?\s*(?:진학|입학|합격)(?:을|하기를|하는\s*것을)?\s*(?:희망|목표|꿈|바람|원함|계획|다짐)|(?:진로\s*희망|장래\s*희망)(?:은|이|을)?\s*[가-힣]{2,}/g,
+      why: '특정 대학·학과 진학 희망은 세특에 기재할 수 없습니다(진로희망은 진로활동 영역에만). 그 희망으로 실제로 한 탐구 활동만 남겨 주세요.' },
     { id: 'score', title: '성적·석차 언급', ref: '18쪽 3-바 · 118쪽 바-1',
       re: /(?:성적|점수|평균|등수|석차|순위|등급|백분위|원점수|내신)[이가은는을를]?\s*(?:아주\s*|매우\s*|가장\s*)?(?:높|낮|우수|상위|하위|좋|안\s*좋|뛰어)|전교\s*\d+\s*등|반에서\s*\d+\s*등|\d+\s*등(?:을|급|\s*안|\s*이내)?\s*(?:을\s*)?(?:차지|기록|달성|함|하였)|상위\s*\d+\s*%|\d+\s*점\s*(?:만점|이상|대)|[1-9]\s*등급/g,
       allow: /등급\s*(?:발암|난연|호텔)|\d+\s*등분/,
@@ -579,7 +609,7 @@
 
   SA.lex = {
     CRITERIA, DANGER_RULES, BRAND_TERMS, EDU_ALLOW, BYTE_LIMIT,
-    EVAL_PATTERNS, ABSTRACT_PATTERNS, FUTURE_PATTERNS, PERSONALITY_PATTERNS, BRANDISH, BRAND_GENERIC_HEAD, COMPANY_MARK, ADVANCED_CONCEPTS, LEAP_TRIGGERS, TYPO_TERMS, TYPO_MAP, FORBIDDEN_TEMPLATES, VAGUE_NOUNS, CLICHES, EXAGGERATIONS, SELF_VOICE, SYMBOL, KNOWLEDGE_PREDICATES, LEARN_ONLY, GROWTH_SHAPES,
+    EVAL_PATTERNS, ABSTRACT_PATTERNS, FUTURE_PATTERNS, PERSONALITY_PATTERNS, BRANDISH, BRAND_GENERIC_HEAD, COMPANY_MARK, TOOL_FRAME, PAREN_LATIN, HEAD_SUFFIX_GENERIC, LATIN_ALLOW, PLACE_GENERIC, ADVANCED_CONCEPTS, LEAP_TRIGGERS, TYPO_TERMS, TYPO_MAP, FORBIDDEN_TEMPLATES, VAGUE_NOUNS, CLICHES, EXAGGERATIONS, SELF_VOICE, SYMBOL, KNOWLEDGE_PREDICATES, LEARN_ONLY, GROWTH_SHAPES,
     PROCESS_MARKERS, GROWTH_MARKERS, THINK_VERBS, ACT_VERBS, GENERIC_WORDS, CANDIDATES, TEMPLATES, SLOT, OBSERVE_POINTS,
     SKELETON_CATS, SKELETON_LABEL, COMPETENCY, PRAISE,
   };
