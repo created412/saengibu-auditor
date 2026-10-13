@@ -1,0 +1,15 @@
+{
+  "id": "hyun5ooo/koelectra-base-v3-discriminator-ai-detect",
+  "revision": "1ceaa9f827dde3d22853b1260c173d8c2a7b925a",
+  "tokenizerId": "monologg/koelectra-base-v3-discriminator",
+  "tokenizerRevision": "68b30cd259f34a4b5aa8786392612ba2a2617fcc",
+  "name": "한국어 KoELECTRA AI 탐지",
+  "license": "Apache-2.0",
+  "source": "https://huggingface.co/hyun5ooo/koelectra-base-v3-discriminator-ai-detect",
+  "experimental": true,
+  "aiLabelIndex": 1,
+  "thresholds": { "low": 0.2, "high": 0.8 },
+  "minCharacters": 300,
+  "maxSegments": 60,
+  "publisherEvaluation": "2025 DACON 공개 리더보드 ROC-AUC 0.894 (공개자 보고). 정확도가 아니며 학교 문서 성능은 별도 검증되지 않았습니다."
+}

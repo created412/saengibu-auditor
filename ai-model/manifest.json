@@ -1,0 +1,51 @@
+{
+  "format": "onnx-fp16-weights-fp32-compute",
+  "bytes": 226086116,
+  "sha256": "186679bacad9424b0bb105914ba4acd61d4e169c87d7059f40465be4c14a6e69",
+  "parts": [
+    {
+      "file": "model-fp16.part0.bin",
+      "bytes": 50331648,
+      "sha256": "be1da271919ede50e670d9471ecaae9daebdeb574b5d67aeec26b404c5889cd1"
+    },
+    {
+      "file": "model-fp16.part1.bin",
+      "bytes": 50331648,
+      "sha256": "b534b60d0435da1c074ecd4fd6d5e0cc70afc52e3fe9337cc957b2f948056d8c"
+    },
+    {
+      "file": "model-fp16.part2.bin",
+      "bytes": 50331648,
+      "sha256": "60cb554ba3fcd82ffd64b832cc738213b394853812f724fa3d5b60fa903c5009"
+    },
+    {
+      "file": "model-fp16.part3.bin",
+      "bytes": 50331648,
+      "sha256": "d5c30d1d3a95437a2cf5c02f2f271581d05e35a4ac5b22d65cbc565831642caf"
+    },
+    {
+      "file": "model-fp16.part4.bin",
+      "bytes": 24759524,
+      "sha256": "033440a75d658facf7e6b2052286842bd8591b8f7acc48fc0a45b557c5bdaa77"
+    }
+  ],
+  "source": {
+    "id": "hyun5ooo/koelectra-base-v3-discriminator-ai-detect",
+    "revision": "1ceaa9f827dde3d22853b1260c173d8c2a7b925a",
+    "tokenizerId": "monologg/koelectra-base-v3-discriminator",
+    "tokenizerRevision": "68b30cd259f34a4b5aa8786392612ba2a2617fcc",
+    "name": "한국어 KoELECTRA AI 탐지",
+    "license": "Apache-2.0",
+    "source": "https://huggingface.co/hyun5ooo/koelectra-base-v3-discriminator-ai-detect",
+    "experimental": true,
+    "aiLabelIndex": 1,
+    "thresholds": {
+      "low": 0.2,
+      "high": 0.8
+    },
+    "minCharacters": 300,
+    "maxSegments": 60,
+    "publisherEvaluation": "2025 DACON 공개 리더보드 ROC-AUC 0.894 (공개자 보고). 정확도가 아니며 학교 문서 성능은 별도 검증되지 않았습니다."
+  },
+  "conversion": "PyTorch ONNX opset 17; float16 weight storage, float32 compute"
+}

@@ -1,0 +1,1948 @@
+/* 화면 — 개별 감사(진단 → 3초 처방 → 수정 작업대) / 학급 감사(세특 응급실 → 집중치료 → 완료 보고서)
+ * 등급: 위험(기재 금지 · 바로 수정, 남아 있으면 입력 불가) / 주의(수정 권장, 품질 점수에 반영) */
+(function () {
+  const { ko, lex, engine: E, demo, art, stage, report, feedback } = window.SA;
+
+  /* ───────────── 유틸 ───────────── */
+  const $ = (sel, root = document) => root.querySelector(sel);
+  const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const critName = (key) => (lex.CRITERIA.find((c) => c.key === key) || {}).name || '';
+  const barColor = (v) => (v >= 80 ? 'green' : v >= 60 ? 'amber' : 'red');
+  const hangulChars = (bytes) => Math.round(bytes / 3);
+  // 〔 〕를 지우든 남기든 같게 — 예시 문구가 그대로 남은 칸만 ‘안 채운 칸’으로 본다
+  const hasSlot = (t) => E.slotState(t).unfilled.length > 0;
+
+  let toastTimer;
+  function toast(msg) {
+    let el = $('.toast');
+    if (!el) { el = document.createElement('div'); el.className = 'toast'; el.setAttribute('role', 'status'); document.body.appendChild(el); }
+    el.textContent = msg;
+    el.hidden = false;
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => { el.hidden = true; }, 2600);
+  }
+
+  function keepScroll(fn) {
+    const wb = $('.workbench');
+    const top = wb ? wb.scrollTop : 0;
+    const active = document.activeElement && document.activeElement.id;
+    fn();
+    const wb2 = $('.workbench');
+    if (wb2) wb2.scrollTop = top;
+    if (active) { const el = document.getElementById(active); if (el) el.focus({ preventScroll: true }); }
+  }
+
+  function download(filename, content, type) {
+    const blob = new Blob([content], { type });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = filename;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
+  function diffHtml(a, b) {
+    return E.diffWords(a, b).map((d) => (d.op === '=' ? esc(d.w) : d.op === '+' ? `<ins class="add">${esc(d.w)}</ins>` : `<del class="rem">${esc(d.w)}</del>`)).join(' ');
+  }
+
+  function byteLine(text) {
+    const b = ko.neisBytes(text);
+    return `<div class="byte-counter ${b > lex.BYTE_LIMIT ? 'over' : ''}">${b.toLocaleString()} byte · 한글 약 ${hangulChars(b)}자 / 상한 1,500 byte(500자)</div>`;
+  }
+
+  function verdictTag(v, big) {
+    return `<div class="gtag ${v.key} ${big ? 'big' : ''}" aria-label="판정 ${esc(v.stamp)}">${esc(v.stamp)}<small>${esc(v.sub)}</small></div>`;
+  }
+
+  function arch({ badge, title, sub, tag }) {
+    return `<section class="arch">
+      <div class="arch-badge">${esc(badge)}</div>
+      <h1 class="arch-title">${title}</h1>
+      <p class="arch-sub">${sub}</p>
+      <div class="arch-tag">${esc(tag)}</div>
+    </section>`;
+  }
+
+  /* ═════════════ 개별 감사 ═════════════ */
+  const S = {
+    stage: 'input', original: '', text: '', source: '',
+    facts: [], confirmed: 0, dismissed: new Set(), verified: new Set(), history: [],
+    audit: null, first: null, panel: null, drafts: {},
+    cases: [{ original: '', text: '', source: '', facts: [], confirmed: 0, dismissed: new Set(), verified: new Set(), history: [], first: null, stage: 'input' }],
+    idx: 0,
+  };
+
+  function reauditSingle() {
+    const t0 = performance.now();
+    S.audit = E.audit(S.text, { sources: S.source, dismissed: S.dismissed, verified: S.verified });
+    S.auditMs = performance.now() - t0;
+    if (S.cases) S.cases[S.idx] = packCase(); // 사례를 옮겨 다녀도 작업 내용이 남는다
+  }
+
+  function snapshot() {
+    return { text: S.text, facts: [...S.facts], confirmed: S.confirmed, dismissed: new Set(S.dismissed), verified: new Set(S.verified) };
+  }
+
+  function startSingle(text, source, asNewCase) {
+    if (asNewCase && (S.original || '').trim()) {
+      saveCase();
+      S.cases.push({ original: '', text: '', source: '', facts: [], confirmed: 0, dismissed: new Set(), verified: new Set(), history: [], first: null, stage: 'input' });
+      S.idx = S.cases.length - 1;
+    }
+    Object.assign(S, {
+      stage: 'report', original: text.trim(), text: text.trim(), source: (source || '').trim(),
+      facts: [], confirmed: 0, dismissed: new Set(), verified: new Set(), history: [], panel: null, drafts: {}, editing: false,
+    });
+    reauditSingle();
+    S.first = S.audit;
+    S.popStamp = true;
+    S.scan = true; // 결과를 바로 던지지 않고 검사 장면을 보여 준다
+    saveCase();
+    location.hash = '#single';
+    render();
+    window.scrollTo({ top: 0 });
+  }
+
+  function draftFor(sig) {
+    if (!S.drafts[sig]) S.drafts[sig] = { checked: [], edits: {}, customOn: false, custom: '', keepEval: true, detail: '', sourceFact: '', replacement: '', repCustomOn: false, target: '', rewrite: '', cTopic: '', cBasis: '', cFinding: '' };
+    return S.drafts[sig];
+  }
+
+  /* ── 사례 이동: 여러 세특을 이어서 감사한다 ── */
+  function packCase() {
+    return {
+      original: S.original, text: S.text, source: S.source, facts: [...S.facts], confirmed: S.confirmed,
+      dismissed: new Set(S.dismissed), verified: new Set(S.verified), history: [...S.history], first: S.first, stage: S.stage,
+    };
+  }
+
+  function unpackCase(c) {
+    Object.assign(S, {
+      original: c.original, text: c.text, source: c.source, facts: [...c.facts], confirmed: c.confirmed,
+      dismissed: new Set(c.dismissed), verified: new Set(c.verified), history: [...c.history], first: c.first,
+      stage: c.stage, panel: null, drafts: {}, editing: false,
+    });
+    if (S.stage === 'report') reauditSingle(); else S.audit = null;
+  }
+
+  function saveCase() { S.cases[S.idx] = packCase(); }
+
+  function gotoCase(i) {
+    if (i < 0 || i >= S.cases.length) return;
+    saveCase();
+    S.idx = i;
+    unpackCase(S.cases[i]);
+    render();
+    window.scrollTo({ top: 0 });
+  }
+
+  function newCase() {
+    saveCase();
+    S.cases.push({ original: '', text: '', source: '', facts: [], confirmed: 0, dismissed: new Set(), verified: new Set(), history: [], first: null, stage: 'input' });
+    S.idx = S.cases.length - 1;
+    unpackCase(S.cases[S.idx]);
+    render();
+    window.scrollTo({ top: 0 });
+  }
+
+  function caseNav(opts = {}) {
+    const n = S.cases.length;
+    return `<div class="case-nav no-print">
+      <button class="btn btn-primary ${opts.big ? '' : 'btn-sm'}" type="button" data-act="case-new">+ 다른 세특 감사하기</button>
+      ${n > 1 ? `<span class="case-sep"></span>
+        <button class="btn btn-sm" type="button" data-act="case-prev" ${S.idx > 0 ? '' : 'disabled'}>‹ 이전 세특</button>
+        <span class="case-count">세특 <b>${S.idx + 1}</b> / ${n}</span>
+        <button class="btn btn-sm" type="button" data-act="case-next" ${S.idx < n - 1 ? '' : 'disabled'}>다음 세특 ›</button>` : ''}
+    </div>`;
+  }
+
+  function singleMetrics() {
+    const g = E.guard(S.original, S.text, S.facts);
+    return { facts: S.facts.length + S.confirmed, improved: E.changedSentences(S.original, S.text), aiAdded: g.novel.length, novel: g.novel };
+  }
+
+  function legend() {
+    return `<div class="legend">
+      <div class="legend-item red"><span class="gtag red">위험</span><div><b>기재 금지 · 바로 수정</b>
+        <p>대회·수상, 공인어학시험, 모의고사 성적, 논문, 대학명·기관명·상호명·강사명, 학교명, 자격증, 방과후학교, 해외 활동, 부모 직업, 장학금, 분량 초과 등 — 2026 기재요령 조항·쪽수와 함께 알려 드립니다. 남아 있으면 <b>입력 불가</b>입니다.</p></div></div>
+      <div class="legend-item amber"><span class="gtag amber">주의</span><div><b>수정 권장</b>
+        <p>역량의 근거 부족, 추상적 표현, 교과 지식 단순 서술, 학생 소감 어투, 활동 나열, 과장, 명사형 종결 — 좋은 세특의 요건(성취과정·성취특성이 드러나는 구체적 기록)에 비추어 알려 드립니다.</p></div></div>
+      <div class="legend-item blue"><span class="gtag blue">가드</span><div><b>AI 임의 사실 추가 0건</b>
+        <p>수정은 선생님이 확인한 사실만으로 합니다. 원문과 확인 사실에 없는 표현·수치·부정의 변경은 사실 가드가 잡습니다.</p></div></div>
+    </div>`;
+  }
+
+  function renderSingleInput() {
+    const text = S.original || '';
+    return `
+    ${arch({ badge: '2026학년도', title: '생기부<br>감사관', sub: '학교생활기록부 기재요령에 맞춰 세특을 점검하고,<br>선생님이 확인한 사실만으로 고칩니다.', tag: '고등학교' })}
+    <div class="home-grid">
+      <figure class="art-wrap">${art.cover()}</figure>
+      <div class="card card-pad stack">
+        <div class="row" style="justify-content:space-between"><h2>세특 한 편 감사</h2><span class="pill-badge">개별 감사</span></div>
+        ${S.cases.length > 1 ? caseNav() : ''}
+        <label class="field"><span>세특 원문</span>
+          <textarea id="inText" rows="7" placeholder="과목별 세부능력 및 특기사항을 붙여넣으세요.">${esc(text)}</textarea>
+        </label>
+        <div id="inBytes">${byteLine(text)}</div>
+        <details class="source-box" ${S.source ? 'open' : ''}>
+          <summary>원자료 대조 감사 <span class="faint">(선택)</span></summary>
+          <p class="small muted" style="margin:6px 0 8px">탐구보고서·발표 기록·관찰 메모를 넣으면 세특의 문장마다 학생 자료에서 근거를 찾습니다.</p>
+          <textarea id="inSource" rows="5" placeholder="[탐구보고서 3쪽] …&#10;[교사 관찰 메모] …">${esc(S.source)}</textarea>
+        </details>
+        <div class="row">
+          <button class="btn" data-act="single-demo" type="button">예시 불러오기</button>
+          <div class="spacer"></div>
+          <button class="btn btn-primary btn-lg" data-act="single-start" type="button">감사 시작</button>
+        </div>
+      </div>
+    </div>
+    ${legend()}`;
+  }
+
+  /**
+   * 기록 렌더링 — 구절 지적은 형광펜(위험 빨강 / 주의 노랑), 글 전반 지적은 근거 범위에 엷은 점선 밑줄.
+   * 둘이 겹칠 수 있으므로 모든 경계로 잘라 구간마다 필요한 표시를 입힌다.
+   */
+  function highlightDoc(text, issues, opts = {}) {
+    const spans = [];
+    const scopes = [];
+    for (const i of issues) {
+      if (i.global) scopes.push({ s: i.scopeStart || 0, e: i.scopeEnd == null ? text.length : i.scopeEnd, issue: i });
+      else if (i.end > i.start) spans.push({ s: i.start, e: i.end, issue: i });
+    }
+    spans.sort((a, b) => a.s - b.s);
+    const cuts = new Set([0, text.length]);
+    [...spans, ...scopes].forEach((r) => { cuts.add(r.s); cuts.add(r.e); });
+    // 문장 경계도 자른다 — 읽어 내려가는 연출이 문장 단위로 움직일 수 있게
+    const sents = opts.sentences || [];
+    sents.forEach((s) => { cuts.add(s.start); cuts.add(s.end); });
+    const sentOf = (pos) => {
+      const k = sents.findIndex((x) => pos >= x.start && pos < x.end);
+      return k < 0 ? '' : ` data-si="${k}"`;
+    };
+    const points = [...cuts].filter((p) => p >= 0 && p <= text.length).sort((a, b) => a - b);
+    const label = (i) => (opts.labels ? opts.labels[i.signature] : '');
+    // 읽기 순번 — 어절 하나, 형광펜 구절 하나가 각각 ‘읽는 단위’가 된다
+    let ri = 0;
+    const words = (chunk, si) => chunk.split(/(\s+)/).map((w) => (/^\s*$/.test(w) ? w
+      : `<span class="sg"${si} data-ri="${ri++}">${esc(w)}</span>`)).join('');
+    let html = '';
+    for (let k = 0; k < points.length - 1; k++) {
+      const s = points[k];
+      const e = points[k + 1];
+      if (e <= s) continue;
+      const span = spans.find((r) => s >= r.s && e <= r.e);
+      const scope = scopes.find((r) => s >= r.s && e <= r.e);
+      const si = sentOf(s);
+      let out = si ? words(text.slice(s, e), si) : esc(text.slice(s, e));
+      if (span) {
+        const i = span.issue;
+        out = `<mark class="hl ${i.severity} ${opts.active === i.signature ? 'active' : ''}"${si} data-ri="${ri++}" data-kind="${esc(i.gradeName)}" data-name="${esc(i.type === 'forbidden' ? i.titles.join('·') : i.label)}" role="button" tabindex="0" data-act="focus-issue" data-sig="${esc(i.signature)}" title="${esc(i.gradeName)} · ${esc(i.label)} — 클릭하면 안내와 처방이 열립니다">${esc(text.slice(s, e))}${e === span.e ? `<sup>${esc(label(i))}</sup>` : ''}</mark>`;
+      }
+      if (scope) {
+        const i = scope.issue;
+        out = `<span class="scope ${i.severity} ${opts.active === i.signature ? 'active' : ''}" data-act="focus-issue" data-sig="${esc(i.signature)}" title="글 전반 · ${esc(i.label)} — 클릭하면 안내와 처방이 열립니다">${out}</span>`;
+      }
+      html += out;
+    }
+    return html;
+  }
+
+  /** 기록 위 ‘글 전반 지적’ 단서 */
+  function globalChips(issues, nums, activeSig) {
+    const g = issues.filter((i) => i.global);
+    if (!g.length) return '';
+    return `<div class="global-cues"><span class="cue-label">글 전반 지적 ${g.length}</span>
+      ${g.map((i) => `<button class="cue ${i.severity} ${activeSig === i.signature ? 'on' : ''}" type="button" data-act="focus-issue" data-sig="${esc(i.signature)}">
+        <span class="cue-no">${esc(nums[i.signature] || '')}</span>${esc(i.label)}</button>`).join('')}
+      <span class="faint small">점선 밑줄이 그 지적의 근거 범위입니다</span></div>`;
+  }
+
+  function issueNumbers(issues) {
+    const map = {};
+    issues.forEach((i, k) => { map[i.signature] = k + 1; });
+    return map;
+  }
+
+  function criteriaBars(scores, base, na = []) {
+    return `<div class="crit-list">${lex.CRITERIA.map((c) => {
+      if (na.includes(c.key)) {
+        return `<div class="crit na" title="분량이 짧아 판단을 보류합니다. 총점에서도 제외했습니다."><span class="name">${c.name}</span>
+          <span class="na-note">분량이 짧아 판단 보류 · 총점에서 제외</span><span class="val">—</span></div>`;
+      }
+      const v = scores[c.key];
+      const b = base ? base[c.key] : null;
+      const delta = b != null && v !== b ? `<span class="delta">${v > b ? '+' : ''}${v - b}</span>` : '';
+      return `<div class="crit" title="${esc(c.q)}"><span class="name">${c.name}</span>
+        <span class="bar"><i class="${barColor(v)}" style="width:${v}%"></i>${b != null && b !== v ? `<b style="left:${b}%"></b>` : ''}</span>
+        <span class="val">${v}${delta}</span></div>`;
+    }).join('')}</div>`;
+  }
+
+  function chainHtml() {
+    const a = S.audit;
+    const typeName = { 행동: '학생 행동', 사고: '학생 사고', 평가: '교사 평가', 서술: '서술' };
+    return `<div class="chain">${a.sentences.map((s) => {
+      const evIssue = a.issues.find((i) => i.type === 'evidence' && i.start >= s.start && i.end <= s.end);
+      const srcIssue = a.issues.find((i) => i.type === 'source' && i.start === s.start);
+      return `<div class="chain-row"><div class="chain-units">${s.clauses.map((c, k) => {
+        let cls = c.type === '행동' ? 'act' : c.type === '사고' ? 'think' : '';
+        let mark = '';
+        if (c.type === '평가') {
+          const bad = evIssue && c.abs <= evIssue.start + 2 && c.abs + c.text.length >= evIssue.start;
+          cls = bad ? 'eval-bad' : 'eval-ok';
+          mark = bad ? ' ✗' : ' ✓';
+        }
+        return `${k ? '<span class="arrow">→</span>' : ''}<span class="unit ${cls}"><b>${typeName[c.type]}${mark}</b>${esc(c.text)}</span>`;
+      }).join('')}</div>
+      ${s.sourceMatch ? `<div class="src-hit">근거 발견 ✓ <q>${esc(s.sourceMatch)}</q></div>` : ''}
+      ${srcIssue ? `<div class="src-hit miss">⚠ 근거 확인 불가 — ${esc(srcIssue.why)}</div>` : ''}
+      </div>`;
+    }).join('')}</div>`;
+  }
+
+  const ACTION_LABEL = {
+    source: '📄 자료에서 근거 찾기', observe: '✍️ 내가 관찰한 내용 추가', delete: '✂️ 문제 표현 삭제',
+    keep: '✔ 확인 후 유지', detail: '➕ 맨 뒤에 한 문장 더하기', restyle: '명사형으로 고치기', replace: '🔁 대체어로 바꾸기',
+    rewrite: '✍️ 이 문장 고쳐 쓰기', compose: '🧩 세 칸으로 만들기',
+  };
+
+  function actionLabel(issue, act) {
+    if (issue.type === 'forbidden') {
+      if (act === 'delete') return '✂️ 이 부분 삭제';
+      if (act === 'replace') return `🔁 ‘${issue.replacement}’(으)로 바꾸기`;
+    }
+    if (act === 'delete' && issue.type === 'exag') return '✂️ 강조어 빼기';
+    if (act === 'replace' && (issue.type === 'logic' || issue.type === 'foreign') && issue.replacement) return `🔁 ‘${issue.replacement}’(으)로 바꾸기`;
+    if (act === 'replace' && issue.type === 'quote') return '🔁 직선 따옴표로 바꾸기';
+    if (act === 'keep' && (issue.type === 'foreign' || issue.type === 'quote')) return '✔ 그대로 두기';
+    if (act === 'keep' && issue.type === 'logic') return '✔ 사실임 · 그대로 두기';
+    if (act === 'delete' && issue.type === 'symbol') return '✂️ 기호 지우기';
+    if (act === 'delete' && (issue.type === 'source' || issue.type === 'knowledge' || issue.type === 'selfvoice')) return '✂️ 문장 삭제';
+    if (act === 'delete' && issue.type === 'vague') return '✂️ 부사 빼기';
+    if (act === 'detail' && (issue.type === 'knowledge' || issue.type === 'selfvoice')) return '✍️ 관찰한 행동으로 바꾸기';
+    if (act === 'detail' && issue.type === 'listing') return '✍️ 발견·판단 한 문장 더하기';
+    if (act === 'keep' && issue.type === 'source') return '✔ 직접 확인한 내용';
+    if (act === 'observe' && issue.type === 'cliche') return '✍️ 이 학생만의 장면으로';
+    return ACTION_LABEL[act];
+  }
+
+  /** 초안 상태 → applyAnswer 에 넘길 응답 (칸이 남은 관찰 후보는 적용 불가) */
+  function answerFromDraft(issue, q, action, d) {
+    if (action === 'observe') {
+      const facts = d.checked.map((k) => (d.edits[k] != null ? d.edits[k] : q.candidates[k])).filter((f) => f && f.trim());
+      if (d.customOn && d.custom.trim()) facts.push(d.custom.trim());
+      if (!facts.length || facts.some(hasSlot)) return null;
+      return { kind: 'facts', facts, keepEval: q.canKeepEval && d.keepEval };
+    }
+    if (action === 'source') return d.sourceFact.trim() && !hasSlot(d.sourceFact) ? { kind: 'facts', facts: [d.sourceFact.trim()], keepEval: q.canKeepEval && d.keepEval } : null;
+    if (action === 'detail') return d.detail.trim() && !hasSlot(d.detail) ? { kind: 'detail', detail: d.detail } : null;
+    if (action === 'rewrite') {
+      const targets = q.targets || [];
+      const target = d.target || (targets.length === 1 ? targets[0] : '');
+      const next = (d.rewrite != null && d.rewrite !== '' ? d.rewrite : target).trim();
+      if (!target || !next || hasSlot(next) || next === target) return null;
+      return { kind: 'rewriteSentence', target, text: next };
+    }
+    if (action === 'compose') {
+      const targets = q.targets || [];
+      const target = d.target || (targets.length === 1 ? targets[0] : '');
+      const text = E.composeSentence({ topic: d.cTopic, basis: d.cBasis, finding: d.cFinding });
+      if (!target || !d.cFinding.trim() || !text || hasSlot(text)) return null;
+      return { kind: 'rewriteSentence', target, text };
+    }
+    if (action === 'delete') return { kind: 'delete' };
+    if (action === 'restyle') return { kind: 'restyle' };
+    if (action === 'replace') {
+      const alts = issue.replacements && issue.replacements.length ? issue.replacements : [issue.replacement];
+      const rep = (d.replacement || alts[0] || '').trim();
+      return rep ? { kind: 'replace', replacement: rep } : null;
+    }
+    if (action === 'keep') return { kind: 'keep', confirmed: issue.type === 'source' };
+    return null;
+  }
+
+  function previewHtml(issue, q, action, d) {
+    const ans = answerFromDraft(issue, q, action, d);
+    if (!ans) {
+      const slotLeft = action === 'observe' && d.checked.some((k) => hasSlot(d.edits[k] != null ? d.edits[k] : q.candidates[k]));
+      return `<span class="lbl">미리보기</span><span class="faint">${slotLeft ? '〔 〕 칸을 실제로 관찰한 내용으로 채워 주세요. 칸이 남아 있으면 적용할 수 없습니다.' : '선택하거나 입력하면 수정안이 여기에 나타납니다.'}</span>`;
+    }
+    if (ans.kind === 'keep') {
+      return issue.type === 'forbidden'
+        ? '<span class="lbl">처리</span>기재 금지 사항이 아니라고 판단하셨습니다. 이 표현은 다시 지적하지 않습니다.'
+        : '<span class="lbl">처리</span>교사 판단으로 유지합니다. 목록에서는 빠지지만 품질 점수는 그대로입니다.';
+    }
+    const r = E.applyAnswer(S.text, issue, ans);
+    return `<span class="lbl">수정안 미리보기</span>${diffHtml(S.text, r.text)}`;
+  }
+
+  function panelHtml(issue, q, action) {
+    const d = draftFor(issue.signature);
+    const sig = esc(issue.signature);
+    let body = '';
+    if (action === 'observe') {
+      body = `<div class="q">${esc(q.prompt)} <span class="faint small">실제로 본 것만 체크하고 〔 〕 칸을 채우세요</span></div>
+        ${q.candidates.map((c, k) => {
+          const on = d.checked.includes(k);
+          return `<label class="opt"><input type="checkbox" data-act="draft-check" data-sig="${sig}" data-k="${k}" ${on ? 'checked' : ''}>
+            <span class="opt-text">${on ? `<input type="text" id="edit-${k}-${sig.length}" data-input="draft-edit" data-sig="${sig}" data-k="${k}" value="${esc(d.edits[k] != null ? d.edits[k] : c)}">` : esc(c)}</span></label>`;
+        }).join('')}
+        <label class="opt"><input type="checkbox" data-act="draft-custom" data-sig="${sig}" ${d.customOn ? 'checked' : ''}>
+          <span class="opt-text">${d.customOn ? `<input type="text" id="custom-${sig.length}" data-input="draft-custom-text" data-sig="${sig}" value="${esc(d.custom)}" placeholder="${esc(q.customPlaceholder)}">` : '직접 입력'}</span></label>
+        ${q.canKeepEval ? `<label class="row small" style="margin:8px 0 0 8px"><input type="checkbox" data-act="draft-keepeval" data-sig="${sig}" ${d.keepEval ? 'checked' : ''}> 근거를 쓴 뒤 평가 표현도 남기기</label>` : ''}`;
+    } else if (action === 'source') {
+      if (!S.source) body = '<div class="small muted">원자료가 없습니다. 입력 화면에서 탐구보고서·관찰 메모를 넣으면 근거를 찾아 드립니다.</div>';
+      else {
+        const hits = q.sourceHits;
+        body = `<div class="q">제출 자료에서 관련 대목을 찾았습니다</div>
+          ${hits.length ? hits.map((h, k) => `<div class="src-card"><div>${esc(h.text)}</div>
+            <button class="btn btn-sm" style="margin-top:6px" type="button" data-act="use-source" data-sig="${sig}" data-k="${k}">이 대목을 근거로 기록</button></div>`).join('')
+          : '<div class="small muted">관련 대목을 찾지 못했습니다. ‘내가 관찰한 내용 추가’를 이용하세요.</div>'}
+          ${d.sourceFact || hits.length ? `<label class="field" style="margin-top:10px"><span>기록할 문장 (기록 문체로 다듬어 주세요)</span>
+            <input type="text" id="srcfact-${sig.length}" data-input="draft-source" data-sig="${sig}" value="${esc(d.sourceFact)}" placeholder="예: 사건 장소의 관할 문제를 근거로 일본의 재판 권한을 비판함"></label>` : ''}
+          ${q.canKeepEval ? `<label class="row small" style="margin:8px 0 0"><input type="checkbox" data-act="draft-keepeval" data-sig="${sig}" ${d.keepEval ? 'checked' : ''}> 근거를 쓴 뒤 평가 표현도 남기기</label>` : ''}`;
+      }
+    } else if (action === 'detail') {
+      const tpl = q.templates || [];
+      body = `<div class="q">${esc(q.prompt)}</div>
+        ${tpl.length ? `<div class="tpl-label">문장 틀을 고르고 〔 〕 칸만 채우세요 <span class="faint">— 직접 쓰셔도 됩니다</span></div>
+          <div class="tpl-list">${tpl.map((t, k) => `<button class="tpl ${d.detail === t ? 'on' : ''}" type="button" data-act="use-template" data-sig="${sig}" data-k="${k}">${esc(t)}</button>`).join('')}</div>` : ''}
+        <input type="text" id="detail-${sig.length}" data-input="draft-detail" data-sig="${sig}" value="${esc(d.detail)}" placeholder="${esc(q.customPlaceholder)}">
+        ${hasSlot(d.detail) ? '<div class="small" style="color:var(--amber);margin-top:6px">〔 〕 칸을 실제 관찰 내용으로 채우면 적용할 수 있습니다.</div>' : ''}
+        ${q.sourceHits.length ? `<div class="small muted" style="margin-top:8px">자료 참고: ${q.sourceHits.map((h) => `“${esc(h.text)}”`).join(' ')}</div>` : ''}`;
+    } else if (action === 'rewrite') {
+      const targets = q.targets || [];
+      const picked = d.target || (targets.length === 1 ? targets[0] : '');
+      if (!picked) {
+        body = `<div class="q">어느 문장을 고칠까요?</div>
+          <div class="tpl-list">${targets.map((t, k) => `<button class="tpl" type="button" data-act="pick-target" data-sig="${sig}" data-k="${k}">${esc(t)}</button>`).join('')}</div>`;
+      } else {
+        const sugg = [...(q.suggestions || []), ...(q.templates || [])];
+        body = `<div class="q">이 문장을 고쳐 씁니다 <span class="faint small">원문을 손보거나 아래 추천·틀을 눌러 넣으세요</span></div>
+          <div class="orig-line">원문: ${esc(picked)}</div>
+          ${targets.length > 1 ? `<button class="btn btn-sm btn-ghost" type="button" data-act="pick-target" data-sig="${sig}" data-k="-1">다른 문장 고르기</button>` : ''}
+          <textarea id="rw-${sig.length}" rows="3" data-input="draft-rewrite" data-sig="${sig}" placeholder="${esc(picked)}">${esc(d.rewrite != null && d.rewrite !== '' ? d.rewrite : picked)}</textarea>
+          ${sugg.length ? `<div class="tpl-label" style="margin-top:8px">${issue.grade === 'danger' ? '금지 사실은 빼고 쓸 수 있는 문장' : '이 문장의 조각으로 만든 대체 문장 · 문장 틀'} <span class="faint">— 누르면 위 칸에 들어갑니다</span></div>
+            <div class="tpl-list">${sugg.map((t, k) => `<button class="tpl ${d.rewrite === t ? 'on' : ''}" type="button" data-act="use-rewrite" data-sig="${sig}" data-k="${k}">${esc(t)}</button>`).join('')}</div>` : ''}
+          ${hasSlot(d.rewrite) ? '<div class="small" style="color:var(--amber)">〔 〕 칸을 실제 관찰 내용으로 채우면 적용할 수 있습니다.</div>' : ''}`;
+      }
+    } else if (action === 'compose') {
+      const targets = q.targets || [];
+      const picked = d.target || (targets.length === 1 ? targets[0] : '');
+      if (!picked) {
+        body = `<div class="q">어느 문장을 바꿀까요?</div>
+          <div class="tpl-list">${targets.map((t, k) => `<button class="tpl" type="button" data-act="pick-target" data-sig="${sig}" data-k="${k}">${esc(t)}</button>`).join('')}</div>`;
+      } else {
+        const p = q.parts || {};
+        const preview = E.composeSentence({ topic: d.cTopic, basis: d.cBasis, finding: d.cFinding });
+        body = `<div class="q">세 칸만 채우면 문장은 제가 맞춥니다 <span class="faint small">사실만 적으세요. 어순·어미는 자동입니다</span></div>
+          <div class="orig-line">원문: ${esc(picked)}</div>
+          <label class="field compose-f"><span>① 무엇을 보고 (대상·자료)</span>
+            <input type="text" data-input="c3-topic" data-sig="${sig}" value="${esc(d.cTopic)}" placeholder="${esc(p.topic || '예: 대동법 시행 기록')}"></label>
+          <label class="field compose-f"><span>② 무엇을 근거로</span>
+            <input type="text" data-input="c3-basis" data-sig="${sig}" value="${esc(d.cBasis)}" placeholder="${esc(p.src ? `예: ${p.src}의 해당 대목` : '예: 상인의 기록에 남은 물가 변화')}"></label>
+          <label class="field compose-f"><span>③ 어떤 결론·판단 <span class="faint">(필수)</span></span>
+            <input type="text" data-input="c3-finding" data-sig="${sig}" value="${esc(d.cFinding)}" placeholder="예: 지역에 따라 부담이 다르게 줄었다"></label>
+          ${preview ? `<div class="compose-out"><span class="lbl">만들어진 문장</span>${esc(preview)}</div>` : ''}`;
+      }
+    } else if (action === 'delete') {
+      body = `<div class="q">${issue.type === 'forbidden' ? '기재 금지 표현이 들어 있는 부분을 지우고 문장을 자연스럽게 닫습니다.' : issue.type === 'evidence' ? '근거가 없는 평가 표현을 지우고 문장을 자연스럽게 다시 닫습니다.' : '해당 부분을 지웁니다.'}</div>`;
+    } else if (action === 'replace') {
+      const alts = issue.replacements && issue.replacements.length ? issue.replacements : [issue.replacement];
+      const chosen = d.replacement || alts[0];
+      body = `<div class="q">‘${esc(issue.matches[0])}’ 대신 쓸 상위 일반어를 고르세요 <span class="faint small">조사는 자동으로 맞춥니다</span></div>
+        ${alts.map((r, k) => `<label class="opt"><input type="radio" name="rep-${sig.length}" data-act="use-replacement" data-sig="${sig}" data-k="${k}" ${chosen === r && !d.repCustomOn ? 'checked' : ''}><span class="opt-text">${esc(r)}</span></label>`).join('')}
+        <label class="opt"><input type="radio" name="rep-${sig.length}" data-act="rep-custom" data-sig="${sig}" ${d.repCustomOn ? 'checked' : ''}>
+          <span class="opt-text">${d.repCustomOn ? `<input type="text" id="repc-${sig.length}" data-input="draft-replacement" data-sig="${sig}" value="${esc(d.replacement || '')}" placeholder="직접 입력 (예: 검색 사이트)">` : '직접 입력'}</span></label>`;
+    } else if (action === 'keep') {
+      body = `<div class="q">${issue.type === 'source' ? '선생님이 직접 확인한 내용이면 그대로 둡니다. ‘교사 확인’으로 기록됩니다.' : '문제가 없다고 판단하시면 그대로 둡니다.'}</div>`;
+    } else if (action === 'restyle') {
+      body = '<div class="q">명사형 어미가 아닌 문장을 모두 명사형(~함, ~임)으로 바꿉니다.</div>';
+    }
+    const ready = !!answerFromDraft(issue, q, action, d);
+    return `<div class="panel">${body}
+      <div class="preview" id="pv-${esc(issue.id)}">${previewHtml(issue, q, action, d)}</div>
+      <div class="row" style="justify-content:flex-end;margin-top:10px">
+        <button class="btn btn-sm btn-ghost" type="button" data-act="panel-close">취소</button>
+        <button class="btn btn-sm btn-primary" type="button" data-act="panel-apply" data-sig="${sig}" ${ready ? '' : 'disabled'} id="apply-${esc(issue.id)}">적용</button>
+      </div></div>`;
+  }
+
+  /** 형광펜을 클릭했을 때 그 자리에 열리는 안내·처방 풍선 */
+  /** 풍선을 열자마자 보이는 대체 문장 — 누르면 고쳐 쓰기 칸에 들어간다 */
+  function quickFixHtml(issue, q) {
+    const list = [...(q.suggestions || []), ...(q.templates || [])].filter(Boolean).slice(0, 3);
+    if (!list.length || !(q.targets || []).length) return '';
+    return `<div class="quickfix">
+      <div class="qf-label">${issue.grade === 'danger' ? '금지 사실은 빼고, 이렇게 바꿔 보세요' : '이렇게 바꿔 보세요'}</div>
+      ${list.map((t, k) => `<button class="qf" type="button" data-act="quick-fix" data-sig="${esc(issue.signature)}" data-k="${k}">${esc(t)}</button>`).join('')}
+      <div class="faint small">누르면 아래 ‘고쳐 쓰기’ 칸에 들어갑니다 · 〔 〕는 실제 내용으로 바꿔 주세요</div>
+    </div>`;
+  }
+
+  function popoverHtml(issue) {
+    const q = E.buildQuestion(issue, S.audit, { sources: S.source });
+    const action = S.panel.action;
+    const danger = issue.grade === 'danger';
+    const refs = issue.refs || (issue.ref ? [issue.ref] : []);
+    const heading = issue.type === 'forbidden' ? issue.titles.join(' · ') : issue.label;
+    return `<div class="popover ${issue.severity}" id="popover" role="dialog" aria-label="${esc(issue.gradeName)} · ${esc(heading)}">
+      <button class="pop-close" type="button" data-act="panel-close" aria-label="닫기">✕</button>
+      <div class="pop-head"><span class="gtag ${issue.severity}">${esc(issue.gradeName)}</span><b>${esc(heading)}</b>
+        ${refs.map((r) => `<span class="ref">기재요령 ${esc(r)}</span>`).join('')}</div>
+      ${issue.global ? '' : `<div class="pop-quote">“${esc(issue.mode === 'replace' ? issue.matches.join('’, ‘') : issue.text)}”</div>`}
+      <div class="pop-why">${esc(issue.why)}</div>
+      ${q.mode === 'info' || action === 'rewrite' ? '' : quickFixHtml(issue, q)}
+      ${q.mode === 'info' ? '<div class="small muted" style="margin-top:8px">아래 ‘직접 편집’으로 분량을 줄여 주세요. 줄이면 이 표시가 사라집니다.</div>' : `
+      <div class="rx-label">${danger ? '🚨 바로 수정 — 기재 금지' : '💊 3초 처방'}</div>
+      <div class="rx-actions">${q.actions.map((act) => `<button class="btn ${action === act ? 'on' : ''}" type="button" data-act="rx" data-sig="${esc(issue.signature)}" data-action="${act}" ${act === 'source' && !S.source ? 'title="원자료를 넣으면 사용할 수 있습니다"' : ''}>${esc(actionLabel(issue, act))}</button>`).join('')}</div>
+      ${action ? panelHtml(issue, q, action) : ''}`}
+    </div>`;
+  }
+
+  /** 형광펜 위치에 풍선을 붙인다 (좁은 화면에서는 CSS가 아래쪽 고정 시트로 바꿈) */
+  function positionPopover() {
+    const pop = document.getElementById('popover');
+    const wrap = document.querySelector('.doc-wrap');
+    if (!pop || !wrap) return;
+    const mark = wrap.querySelector('mark.hl.active');
+    if (!mark || window.matchMedia('(max-width: 760px)').matches) return;
+    // 풍선은 기록 바로 아래에 붙고, 화살표가 누른 형광펜을 가리킨다
+    const popBox = pop.getBoundingClientRect();
+    const box = mark.getBoundingClientRect();
+    const caret = box.left - popBox.left + box.width / 2;
+    pop.style.setProperty('--caret', `${Math.max(18, Math.min(caret, pop.offsetWidth - 18))}px`);
+    const over = popBox.bottom - window.innerHeight;
+    if (over > 0) window.scrollBy({ top: over + 16, behavior: 'smooth' });
+  }
+
+  function renderSingleReport() {
+    const a = S.audit;
+    const f = S.first;
+    const v = E.verdict(a);
+    const all = a.issues;
+    const nums = issueNumbers(all);
+    const m = singleMetrics();
+    const pop = S.popStamp; S.popStamp = false;
+
+    const active = S.panel && currentIssue(S.panel.sig);
+    const next = a.issues.find((i) => !active || i.signature !== active.signature) || a.issues[0];
+
+    const headline = a.danger.length
+      ? { line: `기재 금지 ${a.danger.length}건 — 지금은 나이스에 입력할 수 없습니다`, sub: '아래 기록의 <b>빨간 형광펜</b>을 눌러 먼저 고쳐 주세요. 품질 점수와는 별개로 판정합니다.' }
+      : a.caution.length
+        ? { line: `고칠 곳 ${a.caution.length}군데 — 조금만 손보면 좋은 기록이 됩니다`, sub: '<b>노란 형광펜</b>을 누르면 왜 문제인지와 처방이 그 자리에서 열립니다.' }
+        : { line: '기재 금지 없음 · 7대 기준을 모두 통과했습니다', sub: '나이스 입력 전에 한 번 더 읽어 주세요. 결과는 교사 검수용 초안입니다.' };
+
+    return `
+    <div class="report">
+      <div class="card hero ${v.key}">
+        <div class="hero-main">
+          ${gaugeHtml(a.overall, f && f.overall !== a.overall ? f.overall : null)}
+          <div class="hero-text">
+            <span class="pill-badge">생기부 감사 결과</span>
+            <h1 class="hero-line">${headline.line}</h1>
+            <p class="hero-sub">${headline.sub}</p>
+            <div class="hero-meta">
+              <span class="gcount red ${a.danger.length ? '' : 'zero'}"><b>위험 ${a.danger.length}</b> 기재 금지</span>
+              <span class="gcount amber ${a.caution.length ? '' : 'zero'}"><b>주의 ${a.caution.length}</b> 수정 권장</span>
+              ${a.hasSource ? '<span class="pill blue">원자료 대조 ✓</span>' : '<span class="pill" style="background:var(--bg-2);color:var(--ink-2)" title="수행평가 결과물·활동지 등 원자료를 넣으면 기록의 사실을 자료와 대조합니다">원자료 없음 · 사실 대조 안 함</span>'}
+              <span class="faint small">${a.bytes.toLocaleString()} byte · 한글 약 ${hangulChars(a.bytes)}자 / 1,500</span>
+            </div>
+          </div>
+          <div class="stamp-box ${pop ? 'pop' : ''}">${verdictTag(v, true)}</div>
+        </div>
+        ${auditLogHtml(a)}
+        <div class="hero-bar no-print">
+          ${caseNav({ big: true })}
+          <div class="spacer"></div>
+          <button class="btn btn-sm" type="button" data-act="card-open">🖼 보고서 이미지</button>
+          <button class="btn btn-sm" type="button" data-act="single-new">이 세특 다시 입력</button>
+          <button class="btn btn-sm btn-ghost" type="button" data-act="print">인쇄</button>
+        </div>
+      </div>
+
+      <div class="card card-pad work-card">
+        <div class="work-head">
+          <div><span class="pill-badge">감사 대상 기록 · 수정 작업대</span>
+            <p class="work-hint">형광펜을 클릭하면 <b>왜 문제인지</b>와 <b>처방</b>이 그 자리에 열립니다.</p></div>
+          <span class="legend-inline"><span class="hl-chip red"></span>위험 ${a.danger.length}<span class="hl-chip amber"></span>주의 ${a.caution.length}</span>
+        </div>
+
+        <div class="reading-head">
+          <div class="rh-top"><span class="pill-badge">감사 진행 중</span>
+            <span class="rh-line">기록을 읽고 있습니다 — <b class="rh-i">0</b> / ${a.sentences.length}문장</span>
+            <div class="spacer"></div>
+            <span class="gcount red rh-red zero"><b>위험 0</b> 기재 금지</span>
+            <span class="gcount amber rh-amber zero"><b>주의 0</b> 수정 권장</span>
+          </div>
+          <div class="rh-bar"><i></i></div>
+          <div class="rh-found"></div>
+        </div>
+        ${S.editing ? `<textarea id="editText" rows="7">${esc(S.text)}</textarea>
+          <p class="faint small" style="margin:6px 0 0">교과 내용 속 낱말을 잘못 잡았거나 분량을 줄여야 할 때 직접 고치세요. 저장하면 다시 감사합니다.</p>
+          <div class="row" style="justify-content:flex-end;margin-top:8px">
+            <button class="btn btn-sm btn-ghost" type="button" data-act="edit-cancel">취소</button>
+            <button class="btn btn-sm btn-primary" type="button" data-act="edit-save">저장 후 다시 감사</button></div>`
+        : `${globalChips(all, nums, S.panel && S.panel.sig)}
+          <div class="doc-wrap">
+            <div class="doc">${highlightDoc(a.text, all, { active: S.panel && S.panel.sig, labels: nums, sentences: a.sentences }) || '<span class="faint">(빈 기록)</span>'}</div>
+            ${active ? popoverHtml(active) : ''}
+          </div>
+          ${all.length ? '' : `<div class="empty-ok"><div class="big">감사 통과 ✓</div><div class="muted small">위험·주의 사항이 모두 해결되었습니다. 나이스 입력 전에 한 번 더 읽어 주세요.</div></div>`}`}
+        ${a.notes.length ? `<div class="stack small muted" style="margin-top:10px">${a.notes.map((n) => `<div>ⓘ ${esc(n.text)}</div>`).join('')}</div>` : ''}
+        ${byteLine(S.text)}
+
+        <div class="work-bar no-print">
+          ${next ? `<button class="btn btn-primary btn-lg" type="button" data-act="focus-issue" data-sig="${esc(next.signature)}">${active ? '다음 표시로 ▸' : `표시 ${all.length}곳 중 첫 곳부터 ▸`}</button>` : ''}
+          <div class="spacer"></div>
+          <div class="tool-group">
+            ${S.editing ? '' : '<button class="btn btn-sm btn-ghost" type="button" data-act="edit-toggle">✏️ 편집</button>'}
+            <button class="btn btn-sm btn-ghost" type="button" data-act="undo" ${S.history.length ? '' : 'disabled'}>↶ 되돌리기</button>
+            <button class="btn btn-sm btn-ghost" type="button" data-act="reset-original" title="원문으로 되돌리기" ${S.text !== S.original ? '' : 'disabled'}>⟲ 원문</button>
+          </div>
+          <button class="btn btn-sm" type="button" data-act="copy">📋 나이스용 복사</button>
+        </div>
+        ${S.text !== S.original ? `<details class="diff-box"><summary>수정 전 · 후 비교</summary><div class="preview">${diffHtml(S.original, S.text)}</div></details>` : ''}
+
+        <div class="ledger" style="margin-top:14px">
+          <div><strong>${m.facts}</strong><span>교사 확인 사실</span></div>
+          <div><strong>${m.improved}</strong><span>개선한 문장</span></div>
+          <div class="${m.aiAdded ? 'warn' : 'zero'}" title="${m.aiAdded ? esc(m.novel.join(', ')) : '원문·확인 사실에 없는 표현이 없습니다'}"><strong>${m.aiAdded}</strong><span>AI 임의 추가</span></div>
+        </div>
+        <p class="faint small" style="margin-top:12px">결과는 언제나 초안입니다. 기재요령(19쪽 5-다)에 따라 AI 보조 도구를 쓴 경우 최종 입력 전에 허위·과장 여부와 유의사항 준수를 선생님이 직접 확인해야 합니다.</p>
+      </div>
+
+      <div class="report-cols">
+        <div class="card card-pad">
+          <div class="row" style="justify-content:space-between;margin-bottom:14px"><h2>7대 감사기준</h2><span class="faint small">막대 위 세로선 = 처음 점수</span></div>
+          ${criteriaBars(a.scores, f && f !== a ? f.scores : null, a.na)}
+          <div class="swap" style="margin-top:18px">
+            <div class="pct" style="color:var(--${barColor(100 - a.swapRisk)})">${a.swapRisk}%</div>
+            <div><b>이름 바꿔도 되는 세특인가?</b><div class="small muted">학생 교체 가능성 — ${a.swapRisk >= 60 ? '이 기록에는 해당 학생에게만 나타나는 구체적인 질문·해석·결론·탐구과정이 부족합니다.' : a.swapRisk >= 35 ? '학생 고유의 장면이 일부 있지만 더 드러낼 여지가 있습니다.' : '이 학생만의 구체적인 장면이 드러나는 기록입니다.'}</div></div>
+          </div>
+        </div>
+
+        <div class="card card-pad">
+          <h2 style="margin-bottom:6px">증거 연결 분석</h2>
+          <p class="small muted" style="margin:0 0 12px"><b>교사 평가 ← 학생 사고 ← 학생 행동</b> 사이에 증거 연결고리가 있는지 봅니다.</p>
+          ${chainHtml()}
+        </div>
+      </div>
+    </div>`;
+  }
+
+  let stageTimer = 0;
+  /** 화면이 연달아 다시 그려질 때 마지막 것만 연출한다 */
+  function scheduleStage(fn) { clearTimeout(stageTimer); stageTimer = setTimeout(fn, 32); }
+
+  function renderSingle() {
+    const root = $('#view-single');
+    stage.stop();
+    keepScroll(() => { root.innerHTML = S.stage === 'input' ? renderSingleInput() : renderSingleReport(); });
+    if (S.panel) requestAnimationFrame(positionPopover);
+    // 연출은 ‘마지막 렌더’에서 시작한다 (해시 변경 등으로 곧바로 다시 그려지면 앞선 예약은 취소)
+    if (S.scan && S.stage === 'report') scheduleStage(() => {
+      S.scan = false;
+      stage.scanSingle($('#view-single .report'), S.audit);
+    });
+  }
+
+  /* ── 내 사전 (이 브라우저에만 저장) ── */
+  const DICT_KEY = 'sa.dict.v1';
+
+  function dictLoad() {
+    try { return JSON.parse(localStorage.getItem(DICT_KEY) || '[]'); } catch (e) { return []; }
+  }
+
+  function dictSave(list) {
+    try { localStorage.setItem(DICT_KEY, JSON.stringify(list.slice(0, 100))); } catch (e) { /* 저장 못 해도 이번 감사에는 반영된다 */ }
+    E.setUserBrands(list);
+  }
+
+  function renderDict() {
+    const host = $('#dictList');
+    if (!host) return;
+    const list = dictLoad();
+    host.innerHTML = list.length
+      ? `<div class="dict-items">${list.map((d, i) => `<span class="dict-item"><b>${esc(d.word)}</b> → ${esc(d.alt)}
+          <button class="dict-x" type="button" data-act="dict-del" data-k="${i}" aria-label="삭제">✕</button></span>`).join('')}</div>`
+      : '<div class="faint small" style="margin-top:8px">아직 추가한 말이 없습니다.</div>';
+  }
+
+  /* ── 선생님 한 줄 피드백 ── */
+  let fbTone = '';
+
+  function renderFeedbackMine() {
+    const host = $('#fbMine');
+    if (!host) return;
+    const list = feedback.load();
+    if (!list.length) { host.innerHTML = ''; return; }
+    host.innerHTML = `<details class="fb-mine"><summary>내가 남긴 피드백 ${list.length}개</summary>
+      ${list.slice().reverse().map((f) => `<div class="fb-item"><span class="fb-when">${esc(f.at)}</span>
+        ${f.tone ? `<span class="pill blue">${esc(feedback.TONE_LABEL[f.tone] || '')}</span>` : ''}
+        <span>${esc(f.text)}</span></div>`).join('')}
+      <div class="faint small">이 목록은 이 브라우저에만 저장됩니다.</div></details>`;
+  }
+
+  function sendFeedback() {
+    const input = $('#fbText');
+    const note = $('#fbNote');
+    const text = (input.value || '').trim();
+    if (text.length < 4) { toast('한 줄만 적어 주세요 (4자 이상).'); input.focus(); return; }
+    const entry = { text, tone: fbTone, at: new Date().toLocaleDateString('ko-KR') };
+    feedback.add(entry);
+    E.setUserBrands(dictLoad()); // 교사가 등록한 말을 먼저 반영
+  renderDict();
+  renderFeedbackMine();
+    const target = feedback.sendUrl(entry);
+    if (target) {
+      const w = window.open(target.url, '_blank', 'noopener');
+      if (!w) {
+        if (note) note.innerHTML = '창이 막혀 열리지 않았습니다. 아래 주소를 복사해 열어 주세요.<br>' + esc(target.url);
+      }
+    }
+    if (note && target) note.textContent = '고맙습니다. 열린 창에서 내용을 확인하고 보내 주세요. 적어 주신 글은 이 브라우저에도 남겨 두었습니다.';
+    input.value = '';
+    fbTone = '';
+    document.querySelectorAll('.fb-tone').forEach((b) => b.classList.remove('on'));
+  }
+
+  /* ── 감사 보고서 한 장 (PNG) ── */
+
+  /** 원문과 수정본에서 ‘바뀐 문장’만 짝지어 뽑는다 (LCS로 그대로인 문장을 걸러낸다) */
+  function sentencePairs(before, after) {
+    const text = (s) => String(s && s.text != null ? s.text : s).trim();
+    const A = ko.splitSentences(before).map(text).filter(Boolean);
+    const B = ko.splitSentences(after).map(text).filter(Boolean);
+    const dp = Array.from({ length: A.length + 1 }, () => new Array(B.length + 1).fill(0));
+    for (let i = A.length - 1; i >= 0; i--) {
+      for (let j = B.length - 1; j >= 0; j--) {
+        dp[i][j] = A[i] === B[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
+      }
+    }
+    const pairs = [];
+    let i = 0;
+    let j = 0;
+    let rem = [];
+    let add = [];
+    const flush = () => {
+      while (rem.length || add.length) pairs.push({ before: rem.shift() || '', after: add.shift() || '' });
+    };
+    while (i < A.length || j < B.length) {
+      if (i < A.length && j < B.length && A[i] === B[j]) { flush(); i++; j++; continue; }
+      if (j < B.length && (i >= A.length || dp[i][j + 1] >= dp[i + 1][j])) { add.push(B[j]); j++; continue; }
+      rem.push(A[i]); i++;
+    }
+    flush();
+    return pairs;
+  }
+
+  function singleCardData() {
+    const a = S.audit;
+    const f = S.first || a;
+    const m = singleMetrics();
+    const v = E.verdict(a);
+    const checks = auditLogLines(a).map((l) => ({
+      label: l.label,
+      value: String(l.value).replace(/<[^>]+>/g, ''),
+      tone: /<b class="bad"/.test(l.value) ? 'bad' : /<b class="ok"/.test(l.value) ? 'ok' : '',
+    }));
+    const chips = [];
+    if (f.danger.length || a.danger.length) chips.push({ tone: a.danger.length ? 'red' : 'green', text: `위험(기재 금지) ${f.danger.length}건 → ${a.danger.length}건` });
+    chips.push({ tone: a.caution.length ? 'amber' : 'green', text: `주의 ${f.caution.length}건 → ${a.caution.length}건` });
+    chips.push({ tone: 'blue', text: `${a.bytes.toLocaleString()} byte / 1,500` });
+    return {
+      badge: '생기부 감사 보고서',
+      title: '세특 감사 결과',
+      date: new Date().toLocaleDateString('ko-KR'),
+      score: { from: f.overall, to: a.overall, label: '품질 점수' },
+      verdict: v,
+      chips,
+      checksTitle: `검사 항목 — 기재 금지 ${lex.DANGER_RULES.length}개 항목과 7대 기준 대조`,
+      checks,
+      pairsTitle: '고친 문장 — 위(원문) / 아래(수정본)',
+      pairs: sentencePairs(S.original, S.text),
+      ledger: [
+        { n: m.facts, label: '교사 확인 사실' },
+        { n: m.improved, label: '개선한 문장' },
+        { n: m.aiAdded, label: 'AI 임의 추가', tone: m.aiAdded ? 'warn' : 'zero' },
+      ],
+      note: '「2026학년도 학교생활기록부 기재요령(고등학교)」 기준으로 점검한 결과입니다. 수정은 선생님이 확인한 사실로만 이루어지며, 프로그램이 학생 활동을 임의로 지어내지 않습니다. 최종 입력 전 선생님의 확인이 필요한 초안입니다. · 생기부 감사관',
+    };
+  }
+
+  function classCardData() {
+    const b = C.before;
+    const n = C.now;
+    const t = classTotals();
+    const it = (o, k) => o.issueTotals[k] || 0;
+    const pairs = [];
+    C.students.forEach((s) => {
+      if (pairs.length >= 3 || s.text === s.original) return;
+      const p = sentencePairs(s.original, s.text).find((x) => x.before && x.after);
+      if (p) pairs.push(p);
+    });
+    return {
+      badge: '학급 감사 완료 보고서',
+      title: C.title || '우리 반',
+      date: new Date().toLocaleDateString('ko-KR'),
+      score: { from: b.health, to: n.health, label: '학급 생기부 건강도' },
+      verdict: null,
+      chips: [
+        { tone: n.triage.red ? 'red' : 'green', text: `입력 불가 학생 ${b.triage.red}명 → ${n.triage.red}명` },
+        { tone: 'blue', text: `학생 ${n.stats.students}명` },
+      ],
+      checksTitle: '학급 집계 — 감사 전 → 후',
+      checks: [
+        { label: '위험 · 기재 금지', value: `${it(b, 'forbidden') + it(b, 'overflow')}건 → ${it(n, 'forbidden') + it(n, 'overflow')}건`, tone: it(n, 'forbidden') + it(n, 'overflow') ? 'bad' : 'ok' },
+        { label: '역량의 근거 부족', value: `${it(b, 'evidence')}건 → ${it(n, 'evidence')}건` },
+        { label: '추상적 표현', value: `${it(b, 'vague')}건 → ${it(n, 'vague')}건` },
+        { label: '지식 단순 서술', value: `${it(b, 'knowledge')}건 → ${it(n, 'knowledge')}건` },
+        { label: '학생 간 반복', value: `${b.stats.dupPairs}쌍 → ${n.stats.dupPairs}쌍` },
+        { label: '고유성 부족', value: `${b.stats.lowUnique}명 → ${n.stats.lowUnique}명` },
+      ],
+      pairsTitle: '고친 문장 (보기)',
+      pairs,
+      ledger: [
+        { n: t.facts, label: '교사 확인 사실' },
+        { n: t.improved, label: '개선한 문장' },
+        { n: t.aiAdded, label: 'AI 임의 추가', tone: t.aiAdded ? 'warn' : 'zero' },
+      ],
+      note: '「2026학년도 학교생활기록부 기재요령(고등학교)」 기준으로 점검한 결과입니다. 학생 이름·기록은 이 브라우저 밖으로 나가지 않으며, 수정은 선생님이 확인한 사실로만 이루어집니다. · 생기부 감사관',
+    };
+  }
+
+  let cardCanvas = null;
+
+  function openCard(data, filename) {
+    cardCanvas = report.drawCard(data);
+    cardCanvas.className = 'card-canvas';
+    cardCanvas.dataset.filename = filename;
+    const host = $('#cardModal');
+    host.innerHTML = `<div class="modal-box">
+      <div class="row" style="justify-content:space-between">
+        <b>감사 보고서 미리보기</b>
+        <button class="btn btn-sm btn-ghost" type="button" data-act="card-close">닫기 ✕</button>
+      </div>
+      <div class="card-preview"></div>
+      <div class="row" style="justify-content:flex-end">
+        <span class="faint small" style="margin-right:auto">${cardCanvas.width}×${cardCanvas.height}px · 발표·연수 자료에 그대로 쓰실 수 있습니다</span>
+        <button class="btn btn-primary" type="button" data-act="card-save">PNG로 저장</button>
+      </div>
+    </div>`;
+    host.querySelector('.card-preview').appendChild(cardCanvas);
+    host.hidden = false;
+  }
+
+  function closeCard() { const h = $('#cardModal'); h.hidden = true; h.innerHTML = ''; cardCanvas = null; }
+
+  /** 무엇을 몇 개나 검사했는지 — 결과가 ‘이상 없음’일 때도 꼼꼼함이 보이도록 남긴다 */
+  function auditLogLines(a) {
+    const n = (types) => a.issues.filter((i) => types.includes(i.type)).length;
+    const mark = (c) => (c ? { value: `<b class="warn">${c}건</b>`, tone: 'warn' } : { value: '<b class="ok">이상 없음</b>', tone: 'pass' });
+    const forbidden = a.danger.filter((i) => i.type === 'forbidden').length;
+    return [
+      { label: `기재 금지 ${lex.DANGER_RULES.length}개 항목`, ...(forbidden ? { value: `<b class="bad">위반 ${forbidden}건</b>`, tone: 'fail' } : { value: '<b class="ok">이상 없음</b>', tone: 'pass' }) },
+      { label: '분량 (상한 1,500 byte)', ...(a.bytes > lex.BYTE_LIMIT
+        ? { value: `<b class="bad">${a.bytes.toLocaleString()} byte 초과</b>`, tone: 'fail' }
+        : { value: `<b class="ok">여유 ${(lex.BYTE_LIMIT - a.bytes).toLocaleString()} byte</b>`, tone: 'pass' }) },
+      { label: '역량의 근거 · 뜻의 어긋남', ...mark(n(['evidence', 'logic'])) },
+      { label: '구체성 · 과장 · 상투 표현', ...mark(n(['vague', 'exag', 'cliche'])) },
+      { label: '지식 서술 · 소감 어투 · 나열', ...mark(n(['knowledge', 'selfvoice', 'listing', 'growth'])) },
+      { label: '미래 예측 · 인성 단정 · 비약 · 상호 의심', ...mark(n(['future', 'personality', 'leap', 'brandish'])) },
+      { label: '표기 · 따옴표 · 영문 · 반복 · 긴 문장', ...mark(n(['style', 'symbol', 'quote', 'foreign', 'repeat', 'longsent'])) },
+    ];
+  }
+
+  /** 검사 항목 — 줄글 대신 배지 격자. 통과 항목이 초록으로 채워져 ‘무엇을 몇 개 봤는지’가 한눈에 들어온다 */
+  function auditLogHtml(a) {
+    const chars = hangulChars(a.bytes);
+    return `<div class="audit-log">
+      <div class="checks">
+        ${auditLogLines(a).map((l) => `<div class="log-line ${l.tone || ''}"><span class="k">${esc(l.label)}</span><span class="v">${l.value}</span></div>`).join('')}
+      </div>
+      <div class="log-done">약 ${chars.toLocaleString()}자 · 기재 금지 ${lex.DANGER_RULES.length}개 항목과 7대 기준을 모두 대조했습니다 <span class="faint">(${S.auditMs >= 0.1 ? `${S.auditMs.toFixed(1)}ms` : '1ms 미만'})</span></div>
+    </div>`;
+  }
+
+  /** 점수 게이지 — 숫자만 던지지 않고 얼마나 찼는지 보여 준다 */
+  function gaugeHtml(score, base, cap) {
+    const R = 52;
+    const CIRC = 2 * Math.PI * R;
+    const off = CIRC * (1 - Math.max(0, Math.min(100, score)) / 100);
+    return `<div class="gauge ${barColor(score)}" style="--c:${CIRC.toFixed(1)}">
+      <svg viewBox="0 0 120 120" aria-hidden="true">
+        <circle class="track" cx="60" cy="60" r="${R}"></circle>
+        <circle class="fill" cx="60" cy="60" r="${R}" style="stroke-dasharray:${CIRC.toFixed(1)};stroke-dashoffset:${off.toFixed(1)}"></circle>
+      </svg>
+      <div class="gauge-mid">
+        <div class="gauge-num"><span class="sv">${score}</span><small>점</small></div>
+        <div class="gauge-cap">${base != null ? `처음 ${base}점` : (cap || '품질 점수')}</div>
+      </div>
+    </div>`;
+  }
+
+  function currentIssue(sig) {
+    return S.audit.issues.find((i) => i.signature === sig);
+  }
+
+  function applySingle(issue, answer) {
+    S.history.push(snapshot());
+    const r = E.applyAnswer(S.text, issue, answer);
+    // 기재 금지(위험)에는 '유지'가 없다 — 바꾸거나 지워야 한다
+    if (r.dismissed) { if (r.confirmed) S.verified.add(r.dismissed); else S.dismissed.add(r.dismissed); }
+    if (r.confirmed) S.confirmed++;
+    S.text = r.text;
+    S.facts.push(...r.facts);
+    delete S.drafts[issue.signature];
+    S.panel = null;
+    const before = S.audit;
+    reauditSingle();
+    if (r.dismissed) toast(issue.grade === 'danger' ? '기재 금지 사항이 아니라고 표시했습니다.' : '교사 판단으로 유지했습니다.');
+    else if (before.danger.length && !S.audit.danger.length) toast('기재 금지 사항을 모두 고쳤습니다. 이제 입력 가능합니다.');
+    else toast(`수정 완료 · ${before.overall} → ${S.audit.overall}점`);
+  }
+
+  function updatePreview(sig) {
+    const issue = currentIssue(sig);
+    if (!issue || !S.panel) return;
+    const q = E.buildQuestion(issue, S.audit, { sources: S.source });
+    const d = draftFor(sig);
+    const pv = document.getElementById(`pv-${issue.id}`);
+    if (pv) pv.innerHTML = previewHtml(issue, q, S.panel.action, d);
+    const btn = document.getElementById(`apply-${issue.id}`);
+    if (btn) btn.disabled = !answerFromDraft(issue, q, S.panel.action, d);
+  }
+
+  /* ═════════════ 학급 감사 ═════════════ */
+  const C = {
+    stage: 'input', title: '', raw: '', parsed: [], students: [],
+    before: null, now: null, queue: [], pos: 0, drafts: {}, last: null,
+  };
+
+  function parseDelimited(text) {
+    const rows = [];
+    const delim = text.includes('\t') ? '\t' : ',';
+    let row = [];
+    let field = '';
+    let q = false;
+    for (let i = 0; i < text.length; i++) {
+      const ch = text[i];
+      if (q) {
+        if (ch === '"' && text[i + 1] === '"') { field += '"'; i++; }
+        else if (ch === '"') q = false;
+        else field += ch;
+      } else if (ch === '"' && field === '') q = true;
+      else if (ch === delim) { row.push(field); field = ''; }
+      else if (ch === '\n' || ch === '\r') {
+        if (ch === '\r' && text[i + 1] === '\n') i++;
+        row.push(field); field = '';
+        if (row.some((c) => c.trim())) rows.push(row);
+        row = [];
+      } else field += ch;
+    }
+    row.push(field);
+    if (row.some((c) => c.trim())) rows.push(row);
+    return rows;
+  }
+
+  /** 표 → 학생 목록. 머리글이 있으면 이름으로 열을 찾고, 없으면 [학번, 이름, 세특, 원자료] 순서로 본다 */
+  function rowsToStudents(rows) {
+    if (!rows.length) return [];
+    const head = rows[0].map((c) => String(c).replace(/\s/g, ''));
+    const find = (re) => head.findIndex((h) => re.test(h));
+    let idCol = find(/학번|번호/);
+    let nameCol = find(/이름|성명/);
+    let textCol = find(/세특|세부능력|특기사항|기록|내용/);
+    let srcCol = find(/원자료|자료|보고서|메모/);
+    let body = rows;
+    if (textCol !== -1) body = rows.slice(1);
+    else {
+      const w = Math.max(...rows.map((r) => r.length));
+      if (w >= 4) [idCol, nameCol, textCol, srcCol] = [0, 1, 2, 3];
+      else if (w === 3) [idCol, nameCol, textCol, srcCol] = [0, 1, 2, -1];
+      else if (w === 2) [idCol, nameCol, textCol, srcCol] = [-1, 0, 1, -1];
+      else [idCol, nameCol, textCol, srcCol] = [-1, -1, 0, -1];
+    }
+    if (srcCol === textCol) srcCol = -1;
+    return body
+      .map((r, i) => ({
+        id: String((idCol >= 0 && r[idCol]) || i + 1).trim(),
+        name: String((nameCol >= 0 && r[nameCol]) || '').trim(),
+        text: String(r[textCol] || '').trim(),
+        source: String((srcCol >= 0 && r[srcCol]) || '').trim(),
+      }))
+      .filter((s) => s.text.length >= 10);
+  }
+
+  let fileReadGeneration = 0;
+  async function readFile(file) {
+    const generation = ++fileReadGeneration;
+    try {
+      if (file.size > 10 * 1024 * 1024) throw new Error('파일은 10MB까지 읽을 수 있습니다. 파일을 나누어 주세요.');
+      if (/\.xls$/i.test(file.name)) throw new Error('이전 XLS 형식은 지원하지 않습니다. 엑셀에서 다른 이름으로 저장 → XLSX 또는 CSV로 변환해 올려 주세요.');
+      let raw = '', rows;
+      if (/\.xlsx$/i.test(file.name)) {
+        const buffer = await file.arrayBuffer();
+        if (generation !== fileReadGeneration) return;
+        rows = window.SA.readXlsx(buffer);
+      } else {
+        if (!/\.(csv|tsv|txt)$/i.test(file.name)) throw new Error('XLSX·CSV·TSV·TXT 파일을 선택해 주세요.');
+        raw = await file.text();
+        if (generation !== fileReadGeneration) return;
+        rows = parseDelimited(raw);
+      }
+      const parsed = rowsToStudents(rows);
+      if (!parsed.length) throw new Error('세특을 찾지 못했습니다. 첫 번째 시트의 머리글과 10자 이상인 본문을 확인해 주세요.');
+      C.parsed = parsed;
+      C.raw = raw;
+      if (!C.title) C.title = file.name.replace(/\.[^.]+$/, '');
+      render();
+    } catch (error) {
+      if (generation === fileReadGeneration) toast(error.message || '파일을 읽지 못했습니다. 파일 형식을 확인해 주세요.');
+    }
+  }
+
+  function startClass(students, title) {
+    C.title = title || C.title || '우리 반';
+    C.students = students.map((s) => ({ ...s, original: s.text, facts: [], confirmed: 0, dismissed: new Set(), verified: new Set(), status: 'pending' }));
+    C.drafts = {}; C.last = null;
+    classReaudit();
+    C.before = C.now;
+    C.stage = 'dash';
+    C.sort = true; // 30명이 세 칸으로 갈라지는 장면
+    render();
+    window.scrollTo({ top: 0 });
+  }
+
+  function classReaudit() {
+    const byId = new Map(C.students.map((s) => [s.id, s]));
+    C.now = E.classAudit(C.students, { dismissedFor: (id) => byId.get(id).dismissed });
+    // 교사 확인(오탐·직접 확인)은 감점 없이 제외
+    C.now.results.forEach((r) => {
+      const st = byId.get(r.id);
+      if (!st.verified.size) return;
+      r.audit.issues = r.audit.issues.filter((i) => i.grade === 'danger' || !st.verified.has(i.signature));
+      r.audit.danger = r.audit.issues.filter((i) => i.grade === 'danger');
+      r.audit.caution = r.audit.issues.filter((i) => i.grade === 'caution');
+      r.verdict = E.verdict(r.audit);
+    });
+  }
+
+  function resultOf(id) { return C.now.results.find((r) => r.id === id); }
+  function studentOf(id) { return C.students.find((s) => s.id === id); }
+
+  function dangerTally(res) {
+    const map = new Map();
+    res.results.forEach((r) => r.audit.danger.forEach((i) => (i.titles || [i.label]).forEach((t) => map.set(t, (map.get(t) || 0) + 1))));
+    return [...map.entries()].sort((a, b) => b[1] - a[1]);
+  }
+
+  function renderClassInput() {
+    const n = C.parsed.length;
+    return `
+    ${arch({ badge: '세특 응급실', title: '학급<br>감사', sub: '한 반의 세특을 한 번에 점검하고, 기재 금지 사항은 바로,<br>나머지는 학생마다 딱 필요한 질문만 드립니다.', tag: '학급 단위' })}
+    <div class="home-grid">
+      <figure class="art-wrap">${art.cover()}</figure>
+      <div class="card card-pad stack">
+        <div class="row" style="justify-content:space-between"><h2>한 반 세특 넣기</h2><span class="pill-badge">학급 감사</span></div>
+        <label class="field"><span>학급 이름</span><input type="text" id="clsTitle" value="${esc(C.title)}" placeholder="예: 2학년 3반 한국사"></label>
+        <label class="field"><span>세특 표 붙여넣기 <span class="faint">— 엑셀에서 복사: 학번 · 이름 · 세특 · 원자료(선택)</span></span>
+          <textarea id="clsRaw" rows="7" placeholder="20301&#9;김서윤&#9;고려의 대외 관계에 관심을 가지고 …">${esc(C.raw)}</textarea></label>
+        <div class="row">
+          <label class="btn" style="cursor:pointer">파일 올리기 (CSV·XLSX)<input type="file" id="clsFile" accept=".csv,.tsv,.txt,.xlsx,.xls" hidden></label>
+          <button class="btn" type="button" data-act="class-demo">예시 학급 불러오기</button>
+          <div class="spacer"></div>
+          <span class="small ${n ? '' : 'faint'}" id="clsCount">${n ? `${n}명 인식됨` : '아직 인식된 학생이 없습니다'}</span>
+        </div>
+        ${n ? `<div class="table-wrap"><table class="students"><thead><tr><th>학번</th><th>이름</th><th>세특 앞부분</th><th>원자료</th></tr></thead><tbody>
+          ${C.parsed.slice(0, 4).map((s) => `<tr><td>${esc(s.id)}</td><td>${esc(s.name)}</td><td>${esc(s.text.slice(0, 38))}…</td><td>${s.source ? '있음' : '-'}</td></tr>`).join('')}
+          </tbody></table></div>` : ''}
+        <button class="btn btn-primary btn-lg" type="button" data-act="class-start" ${n ? '' : 'disabled'}>학급 감사 시작</button>
+        <p class="faint small" style="margin:0">파일당 10MB · XLSX 첫 시트만 읽기(10,000행·256열·100,000셀). 수식은 저장된 값을 읽으며 날짜·숫자 표시 서식은 적용하지 않습니다. XLS는 XLSX 또는 CSV로 변환해 주세요.<br>학생 기록은 이 브라우저 안에서만 처리되며 어디로도 보내거나 저장하지 않습니다.</p>
+      </div>
+    </div>
+    ${legend()}`;
+  }
+
+  /** 분류 결과 — 학생 한 명이 칩 하나. 감사 직후 세 칸으로 갈라지는 장면을 보여 준다 */
+  /** 분류 결과 — 학생 한 명이 카드 한 장. 감사 직후 카드가 세 칸으로 날아가 꽂힌다 */
+  function triageHtml(c) {
+    const cols = [
+      { key: 'red', n: c.triage.red, label: '기재 금지 포함 · 입력 불가' },
+      { key: 'amber', n: c.triage.amber, label: '수정 권장' },
+      { key: 'green', n: c.triage.green, label: '그대로 입력 가능' },
+    ];
+    const head = { red: '위험', amber: '주의', green: '양호' };
+    return `<div class="triage">${cols.map((col) => {
+      const list = c.results.filter((r) => r.verdict.key === col.key);
+      return `<div class="triage-col ${col.key}">
+        <div class="col-head"><b>${head[col.key]}</b><span class="cnt" data-n="${col.n}">${col.n}</span>명</div>
+        <div class="col-sub">${col.label}</div>
+        <div class="cards">${list.map((r) => {
+        const t = r.audit.danger[0] || [...r.audit.caution].filter((i) => i.type !== 'style').sort((x, y) => y.gain - x.gain)[0];
+        const why = t ? (t.type === 'forbidden' ? t.titles.join('·') : t.label) : '기준 통과';
+        return `<button class="stu-card ${col.key}" type="button" data-act="open-single" data-id="${esc(r.id)}"
+            title="${esc(`${r.id} ${r.name} · ${r.audit.overall}점 · ${why}`)}">
+            <span class="sc-name">${esc(r.name)}</span>
+            <span class="sc-meta">${esc(r.id)}<b>${r.audit.overall}</b></span>
+            <span class="sc-why">${esc(why)}</span>
+          </button>`;
+      }).join('')}</div>
+      </div>`;
+    }).join('')}</div>`;
+  }
+
+  function renderClassDash() {
+    const c = C.now;
+    const r0 = C.before;
+    const doneCount = C.students.filter((s) => s.status === 'done').length;
+    const nameOf = (id) => { const s = studentOf(id); return s ? `${s.id} ${s.name}` : id; };
+    const topIssue = (a) => {
+      const t = a.danger[0] || [...a.caution].filter((i) => i.type !== 'style').sort((x, y) => y.gain - x.gain)[0];
+      if (!t) return '<span class="pill green">양호</span>';
+      const head = t.type === 'forbidden' ? t.titles.join('·') : t.label;
+      return `<span class="pill ${t.severity}">${esc(t.gradeName)}</span> <span class="small">${esc(head)}</span>`;
+    };
+    const maxCliche = c.topCliches.length ? c.topCliches[0][1] : 1;
+    const tally = dangerTally(c);
+
+    return `
+    <div class="dash-grid">
+      <div class="card card-pad span-7">
+        <div class="er-head">
+          <div>
+            <span class="pill-badge">세특 응급실</span>
+            <h2 style="font-size:26px;margin-top:10px">${esc(C.title)} — 학생별 분류</h2>
+            <div class="muted small" style="margin-top:6px">카드를 누르면 그 학생의 세특을 바로 엽니다.
+              <span class="faint">· 학생 ${c.stats.students}명 · 평균 ${c.health}점 · 예상 수정시간 약 ${c.estMinutes}분</span></div>
+          </div>
+          <div class="deck" aria-hidden="true"><span class="deck-n">${c.stats.students}</span><small>명 감사</small></div>
+        </div>
+        ${triageHtml(c)}
+        <div class="row" style="margin-top:18px">
+          <button class="btn btn-red btn-lg" type="button" data-act="treat-start">${doneCount ? '집중치료 이어하기' : '집중치료 시작'}</button>
+          ${doneCount ? '<button class="btn" type="button" data-act="treat-finish">완료 보고서</button>' : ''}
+          <div class="spacer"></div>
+          <button class="btn btn-sm" type="button" data-act="export-csv">결과 CSV</button>
+          <button class="btn btn-sm btn-ghost" type="button" data-act="class-reset">← 다시 입력</button>
+        </div>
+      </div>
+
+      <div class="card card-pad span-5">
+        <h2 style="margin-bottom:8px">학급 감사 결과</h2>
+        <table class="stat-table">
+          <tr><td>학생 수</td><td>${c.stats.students}명</td></tr>
+          <tr class="red-row"><td>위험 · 기재 금지 포함</td><td>${c.stats.forbidden}명 (${c.stats.dangerIssues}건)</td></tr>
+          <tr><td>평균 기록 품질</td><td>${c.health}점</td></tr>
+          <tr><td>역량의 근거 부족</td><td>${c.stats.noEvidence}명</td></tr>
+          <tr><td>고유성 부족</td><td>${c.stats.lowUnique}명</td></tr>
+          <tr><td>문장 반복 의심</td><td>${c.stats.dupPairs}쌍</td></tr>
+          <tr><td>구체적 사고과정 부족</td><td>${c.stats.lowProcess}명</td></tr>
+        </table>
+        ${tally.length ? `<h3 style="margin:16px 0 8px">기재 금지 유형</h3><div class="id-chips">${tally.map(([t, n]) => `<span class="pill red">${esc(t)} ${n}</span>`).join('')}</div>` : ''}
+      </div>
+
+      <div class="card card-pad span-7">
+        <div class="row" style="justify-content:space-between"><h2>🧬 세특 DNA 분석</h2><span class="faint small">같은 문장 뼈대를 공유하는 학생 묶음</span></div>
+        <div style="margin-top:12px">${c.patterns.length ? c.patterns.slice(0, 4).map((p) => `
+          <div class="dna"><div class="row" style="justify-content:space-between"><b>${esc(p.name)} — ${p.ids.length}명</b></div>
+            <div class="dna-flow">${p.template.split(' → ').map((t) => `<code>${esc(t)}</code>`).join('<span class="arrow">→</span>')}</div>
+            <div class="id-chips">${p.ids.map((id) => `<span class="id-chip">${esc(nameOf(id))}</span>`).join('')}</div></div>`).join('')
+          : '<p class="muted">3명 이상이 같은 문장 뼈대를 공유하는 패턴은 없습니다.</p>'}</div>
+        ${c.pairs.length ? `<h3 style="margin:16px 0 8px">문장 구조 유사도 상위</h3><div class="pairs">${c.pairs.slice(0, 6).map((p) => `
+          <div class="pair"><span>${esc(nameOf(p.a))} ↔ ${esc(nameOf(p.b))}</span><b style="text-align:right;color:var(--red)">${Math.round(p.score * 100)}%</b></div>`).join('')}
+          ${c.pairs.length > 6 ? `<div class="faint small">외 ${c.pairs.length - 6}쌍</div>` : ''}</div>` : ''}
+      </div>
+
+      <div class="card card-pad span-5 stack">
+        <h2>가장 많이 쓴 표현</h2>
+        ${c.topCliches.length ? c.topCliches.map(([t, n]) => `<div class="cliche-row"><span>“${esc(t)}”</span><span class="bar"><i class="amber" style="width:${(n / maxCliche) * 100}%"></i></span><b style="text-align:right">${n}회</b></div>`).join('') : '<p class="muted">반복되는 상투 표현이 없습니다.</p>'}
+        <hr class="divider">
+        <h2>학급 평균 — 7대 감사기준</h2>
+        ${criteriaBars(c.criteriaAvg, r0 && r0 !== c ? r0.criteriaAvg : null)}
+      </div>
+
+      <div class="card card-pad span-8">
+        <div class="row" style="justify-content:space-between;margin-bottom:10px"><h2>학생별 감사표</h2><span class="faint small">위험 먼저, 점수 낮은 순</span></div>
+        <div class="table-wrap"><table class="students"><thead><tr><th>학번</th><th>이름</th><th>점수</th><th>판정</th><th>가장 급한 문제</th><th>교체 가능성</th><th></th></tr></thead><tbody>
+          ${[...c.results].sort((a, b) => (b.audit.danger.length > 0) - (a.audit.danger.length > 0) || a.audit.overall - b.audit.overall).map((r) => {
+            const st = studentOf(r.id);
+            return `<tr><td>${esc(r.id)}</td><td>${esc(r.name)}${st.status === 'done' ? ' <span class="pill green">치료 완료</span>' : ''}</td>
+              <td class="num" style="color:var(--${barColor(r.audit.overall)})">${r.audit.overall}</td>
+              <td><span class="pill ${r.verdict.key}">${esc(r.verdict.label)}</span></td>
+              <td>${topIssue(r.audit)}</td><td class="num">${r.audit.swapRisk}%</td>
+              <td><button class="btn btn-sm" type="button" data-act="open-single" data-id="${esc(r.id)}">자세히</button></td></tr>`;
+          }).join('')}
+        </tbody></table></div>
+      </div>
+
+      <div class="card card-pad span-4">
+        <span class="pill-badge">다음 학기를 위한</span>
+        <h2 style="margin:10px 0 6px">학기 초 관찰 포인트</h2>
+        <p class="small muted" style="margin-top:0">우리 반 기록에서 가장 약한 기준입니다. 세특을 쓸 때가 아니라 <b>수업하는 동안</b> 이것을 메모해 두세요.</p>
+        ${c.observe.map((o) => `<div style="margin-top:12px"><b>${o.criterion.name}</b> <span class="faint small">평균 ${o.avg}점</span>
+          <ul class="observe small">${o.points.map((p) => `<li>${esc(p)}</li>`).join('')}</ul></div>`).join('')}
+      </div>
+    </div>`;
+  }
+
+  function buildQueue() {
+    C.queue = [...C.now.results]
+      .filter((r) => studentOf(r.id).status === 'pending' && r.verdict.key !== 'green' && (E.topQuestions(r.audit).length || r.audit.danger.length))
+      .sort((a, b) => (b.audit.danger.length > 0) - (a.audit.danger.length > 0) || a.audit.overall - b.audit.overall)
+      .map((r) => r.id);
+    C.pos = 0;
+  }
+
+  function classQuestions(id) {
+    const r = resultOf(id);
+    return E.topQuestions(r.audit, { sources: studentOf(id).source });
+  }
+
+  function cdraft(id, sig) {
+    const k = `${id}|${sig}`;
+    if (!C.drafts[k]) C.drafts[k] = { checked: [], edits: {}, customOn: false, custom: '', none: false, choice: -1, detail: '', rewrite: '', cTopic: '', cBasis: '', cFinding: '' };
+    return C.drafts[k];
+  }
+
+  function classAnswer(q, d) {
+    if (d.none && q.none) return q.none.answer;
+    // 문장을 통째로 고쳐 쓴 경우(대체 문장·세 칸 조립)가 다른 답보다 앞선다
+    const composed = (d.cFinding || '').trim() ? E.composeSentence({ topic: d.cTopic, basis: d.cBasis, finding: d.cFinding }) : '';
+    const rewritten = (d.rewrite || '').trim() || composed;
+    if (q.grade !== 'danger' && q.targets && q.targets.length && rewritten && !hasSlot(rewritten)) {
+      return { kind: 'rewriteSentence', target: q.targets[0], text: rewritten };
+    }
+    if (q.mode === 'choice') return d.choice >= 0 ? q.choices[d.choice].answer : null;
+    if (q.mode === 'text') return d.detail.trim() && !hasSlot(d.detail) ? { kind: 'detail', detail: d.detail } : null;
+    if (q.mode !== 'multi') return null;
+    const pool = [...q.candidates, ...q.sourceHits.map((h) => h.text)];
+    const facts = d.checked.map((k) => (d.edits[k] != null ? d.edits[k] : pool[k])).filter((f) => f && f.trim());
+    if (d.customOn && d.custom.trim()) facts.push(d.custom.trim());
+    if (!facts.length || facts.some(hasSlot)) return null;
+    return { kind: 'facts', facts, keepEval: q.canKeepEval };
+  }
+
+  /** 학급 카드: 글자를 치는 동안 다시 그리지 않고 ‘만들어진 문장’과 버튼 상태만 맞춘다 */
+  function syncClassCard(sig) {
+    const id = C.queue[C.pos];
+    if (!id) return;
+    const items = classQuestions(id);
+    const k = items.findIndex((x) => x.issue.signature === sig);
+    const d = cdraft(id, sig);
+    const made = (d.cFinding || '').trim() ? E.composeSentence({ topic: d.cTopic, basis: d.cBasis, finding: d.cFinding }) : '';
+    const card = document.getElementById(`qc-${k}`);
+    if (card) {
+      card.classList.toggle('answered', !!classAnswer(items[k].question, d));
+      let box = card.querySelector('.compose-out');
+      const det = card.querySelector('details.rw');
+      if (!box && made && det) { box = document.createElement('div'); box.className = 'compose-out'; det.appendChild(box); }
+      if (box) box.innerHTML = made ? `<b>만들어진 문장</b><div>${esc(made)}</div>` : '';
+    }
+    const any = items.some((x) => classAnswer(x.question, cdraft(id, x.issue.signature)));
+    const btn = document.querySelector('[data-act="treat-apply"]');
+    if (btn) btn.disabled = !any;
+  }
+
+  /** 이 틀을 이미 다른 학생에게 썼으면 표시 — 같은 틀이 반에 퍼지면 ‘이름 바꿔도 되는 세특’이 된다 */
+  function usedTpl(t) {
+    const n = (C.tplUse || {})[t] || 0;
+    return n ? `<span class="used-tag">이미 ${n}명에게 쓴 틀</span>` : '';
+  }
+
+  function qcardHtml(id, item, k) {
+    const { issue, question: q } = item;
+    const d = cdraft(id, issue.signature);
+    const sig = esc(issue.signature);
+    const answered = !!classAnswer(q, d);
+    let body = '';
+    if (q.mode === 'choice') {
+      body = q.choices.map((ch, j) => `<label class="opt"><input type="radio" name="q-${k}" data-act="c-choice" data-sig="${sig}" data-k="${j}" ${d.choice === j ? 'checked' : ''}><span class="opt-text">${esc(ch.label)}</span></label>`).join('');
+    } else if (q.mode === 'text') {
+      body = `${(q.templates || []).length && !d.none ? `<div class="tpl-label">문장 틀을 고르고 〔 〕 칸만 채우세요</div>
+        <div class="tpl-list">${q.templates.map((t, j) => `<button class="tpl ${d.detail === t ? 'on' : ''} ${usedTpl(t) ? 'used' : ''}" type="button" data-act="c-template" data-sig="${sig}" data-k="${j}">${esc(t)}${usedTpl(t)}</button>`).join('')}</div>` : ''}
+        <input type="text" id="cdetail-${k}" data-input="c-detail" data-sig="${sig}" value="${esc(d.detail)}" placeholder="${esc(q.customPlaceholder)}" ${d.none ? 'disabled' : ''}>
+        ${hasSlot(d.detail) ? '<div class="small" style="color:var(--amber);margin-top:4px">〔 〕 칸을 채우면 적용할 수 있습니다.</div>' : ''}
+        ${q.sourceHits.length ? `<div class="small muted" style="margin-top:6px">자료 참고: ${q.sourceHits.map((h) => `“${esc(h.text)}”`).join(' ')}</div>` : ''}
+        <label class="opt none"><input type="checkbox" data-act="c-none" data-sig="${sig}" ${d.none ? 'checked' : ''}><span class="opt-text">${esc(q.none.label)}</span></label>`;
+    } else {
+      const pool = [...q.candidates.map((t) => ({ t, src: false })), ...q.sourceHits.map((h) => ({ t: h.text, src: true }))];
+      body = `<div class="small faint" style="margin-bottom:4px">실제로 본 것만 체크하고 〔 〕 칸을 채우세요</div>${pool.map((o, j) => {
+        const on = d.checked.includes(j);
+        return `<label class="opt"><input type="checkbox" data-act="c-check" data-sig="${sig}" data-k="${j}" ${on ? 'checked' : ''} ${d.none ? 'disabled' : ''}>
+          <span class="opt-text">${o.src ? '<span class="pill blue">자료</span> ' : ''}${on ? `<input type="text" id="cedit-${k}-${j}" data-input="c-edit" data-sig="${sig}" data-k="${j}" value="${esc(d.edits[j] != null ? d.edits[j] : o.t)}">` : esc(o.t)}</span></label>`;
+      }).join('')}
+        <label class="opt"><input type="checkbox" data-act="c-custom" data-sig="${sig}" ${d.customOn ? 'checked' : ''} ${d.none ? 'disabled' : ''}>
+          <span class="opt-text">${d.customOn ? `<input type="text" id="ccustom-${k}" data-input="c-custom-text" data-sig="${sig}" value="${esc(d.custom)}" placeholder="${esc(q.customPlaceholder)}">` : '직접 입력'}</span></label>
+        <label class="opt none"><input type="checkbox" data-act="c-none" data-sig="${sig}" ${d.none ? 'checked' : ''}><span class="opt-text">${esc(q.none.label)}</span></label>`;
+    }
+    // 지적한 문장을 그 자리에서 고쳐 쓰는 길 — 대체 문장 고르기 / 세 칸 조립
+    let rewriteBlock = '';
+    if (issue.grade !== 'danger' && q.targets && q.targets.length && !d.none) {
+      const made = (d.cFinding || '').trim() ? E.composeSentence({ topic: d.cTopic, basis: d.cBasis, finding: d.cFinding }) : '';
+      const p = q.parts || {};
+      const quick = (q.suggestions || []).slice(0, 2);
+      rewriteBlock = `${quick.length && !d.rewrite && !made ? `<div class="quickfix">
+        <div class="qf-label">이렇게 바꿔 보세요 <span class="faint">— 누르면 고쳐 쓰기 칸에 들어갑니다</span></div>
+        ${quick.map((t, j) => `<button class="qf ${usedTpl(t) ? 'used' : ''}" type="button" data-act="c-sugg" data-sig="${sig}" data-k="${j}">${esc(t)}${usedTpl(t)}</button>`).join('')}
+      </div>` : ''}
+      <details class="rw" ${d.rewrite || made ? 'open' : ''}>
+        <summary>✎ 이 문장 고쳐 쓰기 — 뒤에 덧붙이지 않고 그 자리를 바꿉니다</summary>
+        <div class="small muted" style="margin:6px 0">원문: “${esc(q.targets[0])}”</div>
+        ${(q.suggestions || []).length ? `<div class="tpl-label">${issue.grade === 'danger' ? '금지 사실은 빼고 쓸 수 있는 문장' : '이 문장의 조각으로 만든 대체 문장'}</div>
+          <div class="tpl-list">${q.suggestions.map((t, j) => `<button class="tpl ${d.rewrite === t ? 'on' : ''} ${usedTpl(t) ? 'used' : ''}" type="button" data-act="c-sugg" data-sig="${sig}" data-k="${j}">${esc(t)}${usedTpl(t)}</button>`).join('')}</div>` : ''}
+        <input type="text" data-input="c-rewrite" data-sig="${sig}" value="${esc(d.rewrite)}" placeholder="고쳐 쓸 문장 (〔 〕 칸은 채워 주세요)">
+        ${hasSlot(d.rewrite) ? '<div class="small" style="color:var(--amber);margin-top:4px">〔 〕 칸을 채우면 적용할 수 있습니다.</div>' : ''}
+        <div class="tpl-label" style="margin-top:8px">또는 세 칸만 채우면 문장으로 만들어 드립니다</div>
+        <div class="compose-f"><span>① 무엇을</span><input type="text" data-input="c3-topic" data-sig="${sig}" value="${esc(d.cTopic)}" placeholder="${esc(p.topic || '예: 대동법 시행 기록')}"></div>
+        <div class="compose-f"><span>② 무엇을 근거로</span><input type="text" data-input="c3-basis" data-sig="${sig}" value="${esc(d.cBasis)}" placeholder="${esc(p.src ? `예: ${p.src}의 어느 대목` : '예: 사료의 세금 항목')}"></div>
+        <div class="compose-f"><span>③ 무엇을 알아냈나</span><input type="text" data-input="c3-finding" data-sig="${sig}" value="${esc(d.cFinding)}" placeholder="예: 부담이 줄지 않았다"></div>
+        ${made ? `<div class="compose-out"><b>만들어진 문장</b><div>${esc(made)}</div></div>` : ''}
+      </details>`;
+    }
+    const heading = issue.type === 'forbidden' ? issue.titles.join(' · ') : issue.label;
+    const refs = issue.refs || (issue.ref ? [issue.ref] : []);
+    return `<div class="qcard ${issue.severity} ${answered ? 'answered' : ''}" id="qc-${k}">
+      <div style="margin-bottom:6px"><span class="qno">Q${k + 1}.</span><b>${esc(q.prompt)}</b></div>
+      <div class="small muted" style="margin-bottom:6px"><span class="pill ${issue.severity}">${esc(issue.gradeName)}</span> ${esc(heading)}
+        ${refs.map((r) => `<span class="ref">기재요령 ${esc(r)}</span>`).join('')} ${issue.global ? '' : `“${esc(issue.mode === 'replace' ? issue.matches.join('’, ‘') : issue.text)}”`}</div>
+      ${body}${rewriteBlock}</div>`;
+  }
+
+  function renderTreat() {
+    if (C.last) return renderTreatResult();
+    const id = C.queue[C.pos];
+    if (!id) return renderFinale();
+    const r = resultOf(id);
+    const items = classQuestions(id);
+    const dangerItems = items.filter((x) => x.issue.grade === 'danger');
+    const cautionItems = items.filter((x) => x.issue.grade !== 'danger');
+    const expected = E.expectedScore(r.audit, cautionItems.map((x) => x.issue));
+    const labels = {};
+    items.forEach((x, k) => { labels[x.issue.signature] = `Q${k + 1}`; });
+    const anyAnswered = items.some((x) => classAnswer(x.question, cdraft(id, x.issue.signature)));
+    const overflow = r.audit.danger.find((i) => i.type === 'overflow');
+
+    return `<div class="treat stack">
+      <div class="row" style="justify-content:space-between"><span class="muted small">집중치료 ${C.pos + 1} / ${C.queue.length}명</span>
+        <button class="btn btn-sm btn-ghost" type="button" data-act="to-dash">대시보드로</button></div>
+      <div class="progress"><i style="width:${(C.pos / Math.max(1, C.queue.length)) * 100}%"></i></div>
+      <div class="card card-pad stack">
+        <div class="patient-head">
+          <div><span class="pill-badge">${esc(C.title)}</span><h1 class="patient-name">${esc(r.id)} ${esc(r.name)}</h1></div>
+          <div class="stack" style="text-align:right;margin:0">
+            ${verdictTag(r.verdict)}
+            <div class="score-flow"><span class="from">${r.audit.overall}</span><span class="arrow">→</span><span style="color:var(--green)">예상 ${expected}</span></div>
+          </div>
+        </div>
+        <div class="doc">${highlightDoc(r.audit.text, items.map((x) => x.issue), { labels })}</div>
+        ${overflow ? `<div class="alert red"><b>분량 초과(기재요령 208쪽)</b> — ${esc(overflow.why)} 대시보드의 ‘자세히’에서 직접 편집으로 줄여 주세요.</div>` : ''}
+        ${dangerItems.length ? `<div class="grade-head red"><span class="gtag red">위험</span><b>반드시 처리 — 기재 금지</b><span class="cnt">${dangerItems.length}</span></div>
+          <div>${dangerItems.map((x) => qcardHtml(id, x, items.indexOf(x))).join('')}</div>` : ''}
+        ${cautionItems.length ? `<div class="grade-head amber"><span class="gtag amber">주의</span><b>이 학생에 대해 ${cautionItems.length}가지만 알려주세요</b><span class="cnt">${cautionItems.length}</span></div>
+          <div>${cautionItems.map((x) => qcardHtml(id, x, items.indexOf(x))).join('')}</div>` : ''}
+        <div class="row">
+          <button class="btn btn-ghost" type="button" data-act="treat-skip">이 학생 건너뛰기</button>
+          <div class="spacer"></div>
+          <button class="btn btn-primary btn-lg" type="button" data-act="treat-apply" ${anyAnswered ? '' : 'disabled'}>세특 다시 작성</button>
+        </div>
+      </div></div>`;
+  }
+
+  function renderTreatResult() {
+    const L = C.last;
+    const dupWarn = L.dupDelta > 0 ? `<div class="alert amber"><b>이 수정으로 학생 간 반복이 ${L.dupDelta}쌍 늘었습니다.</b> 다른 학생에게 쓴 문장 틀과 같아졌습니다. 〔 〕를 이 학생만의 장면으로 바꾸면 사라집니다.</div>` : '';
+    const st = studentOf(L.id);
+    const r = resultOf(L.id);
+    const left = r.audit.issues.filter((i) => i.type !== 'style');
+    return `<div class="treat stack">
+      <div class="progress"><i style="width:${((C.pos + 1) / Math.max(1, C.queue.length)) * 100}%"></i></div>
+      <div class="card card-pad stack">
+        <div class="patient-head">
+          <div><span class="pill-badge">다시 감사 완료</span><h1 class="patient-name">${esc(st.id)} ${esc(st.name)}</h1></div>
+          <div class="stack" style="text-align:right;margin:0">${verdictTag(r.verdict)}
+            <div class="score-flow"><span class="from">${L.before}</span><span class="arrow">→</span><span style="color:var(--${barColor(r.audit.overall)})">${r.audit.overall}</span></div></div>
+        </div>
+        <div class="preview" style="font-size:16px"><span class="lbl">수정 전 → 후</span>${diffHtml(L.beforeText, st.text)}</div>
+        ${byteLine(st.text)}
+        <div class="row small">
+          <span class="pill ${r.audit.danger.length ? 'red' : 'green'}">위험 ${r.audit.danger.length}건</span>
+          <span class="pill green">교사 확인 사실 ${L.facts}건</span>
+          <span class="pill ${L.guard.ok ? 'green' : 'red'}">AI 임의 추가 ${L.guard.novel.length}건</span>
+          ${left.length ? `<span class="pill amber">남은 지적 ${left.length}건</span>` : '<span class="pill green">통과 ✓</span>'}
+        </div>
+        <div class="row">
+          ${dupWarn}
+          <button class="btn btn-ghost" type="button" data-act="treat-undo">↶ 되돌리기</button>
+          <div class="spacer"></div>
+          <button class="btn btn-primary btn-lg" type="button" data-act="treat-next">${C.pos + 1 < C.queue.length ? '다음 학생' : '완료 보고서 보기'}</button>
+        </div>
+      </div></div>`;
+  }
+
+  function classTotals() {
+    let facts = 0;
+    let improved = 0;
+    let aiAdded = 0;
+    C.students.forEach((s) => {
+      facts += s.facts.length + s.confirmed;
+      improved += E.changedSentences(s.original, s.text);
+      aiAdded += E.guard(s.original, s.text, s.facts).novel.length;
+    });
+    return { facts, improved, aiAdded };
+  }
+
+  function renderFinale() {
+    const b = C.before;
+    const n = C.now;
+    const t = classTotals();
+    const row = (label, x, y, unit, cls = '') => `<tr class="${cls}"><td>${label}</td><td>${x}${unit}</td><td>→</td><td><b style="color:${y < x ? 'var(--green)' : 'inherit'}">${y}${unit}</b></td></tr>`;
+    const it = (o, k) => o.issueTotals[k] || 0;
+    return `<div class="treat stack">
+      ${arch({ badge: '감사 완료 보고서', title: `${esc(C.title)}`, sub: `학급 건강도 <b>${b.health}점 → ${n.health}점</b>`, tag: '감사 완료' })}
+      <div class="card card-pad finale stack">
+        <table class="change-table">
+          ${row('위험 · 기재 금지', it(b, 'forbidden') + it(b, 'overflow'), it(n, 'forbidden') + it(n, 'overflow'), '건', 'red-row')}
+          ${row('입력 불가 학생', b.triage.red, n.triage.red, '명', 'red-row')}
+          ${row('역량의 근거 부족', it(b, 'evidence'), it(n, 'evidence'), '건')}
+          ${row('지식 단순 서술', it(b, 'knowledge'), it(n, 'knowledge'), '건')}
+          ${row('추상적 표현', it(b, 'vague'), it(n, 'vague'), '건')}
+          ${row('학생 간 반복', b.stats.dupPairs, n.stats.dupPairs, '쌍')}
+          ${row('고유성 부족', b.stats.lowUnique, n.stats.lowUnique, '명')}
+        </table>
+        ${n.stats.dupPairs > b.stats.dupPairs ? `<div class="alert amber"><b>학생 간 반복이 ${b.stats.dupPairs}쌍 → ${n.stats.dupPairs}쌍으로 늘었습니다.</b> 같은 문장 틀을 여러 학생에게 쓰면 고유성이 떨어집니다. 틀의 〔 〕는 학생마다 다른 장면으로 채워 주세요.</div>` : ''}
+        <p class="zero-line">교사가 확인한 사실 ${t.facts}건을 바탕으로 ${t.improved}개 문장을 개선했습니다.<br>
+          AI가 임의로 추가한 학생 활동: <em style="color:${t.aiAdded ? 'var(--red)' : 'var(--green)'}">${t.aiAdded}건</em></p>
+        <p class="muted small">‘AI 임의 추가’는 사실 가드가 수정본 전체를 원문·교사 확인 사실과 다시 대조해 센 값입니다(수치·부정 표현 변경 포함).</p>
+        <div class="row" style="justify-content:center">
+          <button class="btn" type="button" data-act="to-dash">대시보드로</button>
+          <button class="btn btn-primary" type="button" data-act="export-csv">결과 CSV 내려받기</button>
+          <button class="btn" type="button" data-act="card-open-class">🖼 보고서 이미지</button>
+        </div>
+      </div>
+      <div class="card card-pad">
+        <h2>“좋은 생기부를 AI에게 써달라고 하지 마세요.”</h2>
+        <p class="muted" style="margin:6px 0 0">AI가 선생님에게, 좋은 생기부를 쓰기 위해 필요한 것을 물어보게 하세요. 다음 학기에는 아래를 수업 중에 메모해 두시면 됩니다.</p>
+        ${n.observe.map((o) => `<div style="margin-top:12px"><b>${o.criterion.name}</b> <span class="faint small">평균 ${o.avg}점</span><ul class="observe small">${o.points.map((p) => `<li>${esc(p)}</li>`).join('')}</ul></div>`).join('')}
+      </div></div>`;
+  }
+
+  function renderClass() {
+    const root = $('#view-class');
+    let html = '';
+    if (C.stage === 'input') html = renderClassInput();
+    else if (C.stage === 'dash') html = renderClassDash();
+    else html = renderTreat();
+    stage.stop();
+    keepScroll(() => { root.innerHTML = html; });
+    if (C.sort && C.stage === 'dash') scheduleStage(() => {
+      C.sort = false;
+      stage.sortClass($('#view-class .triage'));
+    });
+  }
+
+  function applyTreatment() {
+    const id = C.queue[C.pos];
+    const st = studentOf(id);
+    const r = resultOf(id);
+    const items = classQuestions(id);
+    const snap = { text: st.text, facts: [...st.facts], confirmed: st.confirmed, dismissed: new Set(st.dismissed), verified: new Set(st.verified), status: st.status };
+    const answered = items.map(({ issue, question }) => ({ issue, answer: classAnswer(question, cdraft(id, issue.signature)) }));
+    const res = E.applyAnswers(st.text, answered);
+    const dupBefore = C.now.stats.dupPairs;
+    // 어떤 문장 틀을 몇 명에게 썼는지 센다 — 반 전체가 같은 틀이면 고유성이 무너진다
+    C.tplUse = C.tplUse || {};
+    items.forEach(({ issue }) => {
+      const d = cdraft(id, issue.signature);
+      if (d.tpl && answered.find((x) => x.issue.signature === issue.signature).answer) C.tplUse[d.tpl] = (C.tplUse[d.tpl] || 0) + 1;
+    });
+    res.dismissed.forEach((sig) => {
+      const ans = answered.find((x) => x.issue.signature === sig).answer;
+      if (ans.confirmed) st.verified.add(sig); else st.dismissed.add(sig);
+    });
+    st.confirmed += res.confirmed;
+    st.facts.push(...res.facts);
+    st.text = res.text;
+    st.status = 'done';
+    classReaudit();
+    C.last = { id, before: r.audit.overall, beforeText: snap.text, snapshot: snap, facts: res.facts.length + res.confirmed, guard: E.guard(st.original, st.text, st.facts), dupDelta: C.now.stats.dupPairs - dupBefore };
+    render();
+    window.scrollTo({ top: 0 });
+  }
+
+  function exportCsv() {
+    const q = (v) => `"${String(v == null ? '' : v).replace(/"/g, '""')}"`;
+    const before = new Map((C.before ? C.before.results : []).map((r) => [r.id, r.audit.overall]));
+    const lines = [['학번', '이름', '판정', '처음 점수', '현재 점수', '위험(기재 금지)', '주의(수정 권장)', '원문', '수정본', '교사 확인 사실', '바이트'].map(q).join(',')];
+    C.now.results.forEach((r) => {
+      const st = studentOf(r.id);
+      lines.push([r.id, r.name, r.verdict.label, before.get(r.id), r.audit.overall,
+        r.audit.danger.map((i) => `${(i.titles || [i.label]).join('·')}(${(i.refs || [i.ref]).join(', ')}): ${i.matches ? i.matches.join(', ') : ''}`).join(' / '),
+        r.audit.caution.map((i) => `${i.label}: ${i.global ? '' : i.text}`).join(' / '),
+        st.original, st.text, st.facts.join(' / '), ko.neisBytes(st.text)].map(q).join(','));
+    });
+    download(`${C.title || '학급'}_생기부감사.csv`, '﻿' + lines.join('\r\n'), 'text/csv;charset=utf-8');
+  }
+
+  /* ═════════════ 라우팅·이벤트 ═════════════ */
+  function currentView() { return location.hash === '#class' ? 'class' : 'single'; }
+
+  function render() {
+    const view = currentView();
+    $('#view-single').hidden = view !== 'single';
+    $('#view-class').hidden = view !== 'class';
+    document.querySelectorAll('.tab').forEach((t) => t.setAttribute('aria-selected', String(t.dataset.go === view)));
+    if (view === 'single') renderSingle(); else renderClass();
+  }
+
+  window.addEventListener('hashchange', render);
+
+  document.addEventListener('click', async (ev) => {
+    if (ev.target.id === 'cardModal') { closeCard(); return; } // 미리보기 바깥을 누르면 닫는다
+    const go = ev.target.closest('[data-go]');
+    if (go) { ev.preventDefault(); location.hash = `#${go.dataset.go}`; return; }
+    const el = ev.target.closest('[data-act]');
+    // 형광펜 풍선 밖을 누르면 닫는다
+    if (S.panel && currentView() === 'single' && !ev.target.closest('.popover') && !ev.target.closest('mark.hl') && (!el || !['rx', 'panel-apply', 'panel-close', 'draft-check', 'draft-custom', 'draft-keepeval', 'use-source'].includes(el.dataset.act))) {
+      S.panel = null;
+      if (!el) { render(); return; }
+    }
+    if (!el) return;
+    const act = el.dataset.act;
+    const sig = el.dataset.sig;
+
+    switch (act) {
+      /* 개별 */
+      case 'single-demo':
+        S.original = demo.single.text; S.source = demo.single.source; render(); break;
+      case 'single-start': {
+        const text = $('#inText').value.trim();
+        if (text.length < 10) { toast('세특을 10자 이상 입력해 주세요.'); return; }
+        startSingle(text, $('#inSource').value);
+        break;
+      }
+      case 'card-open':
+        openCard(singleCardData(), `세특_감사보고서_${new Date().toISOString().slice(0, 10)}.png`);
+        break;
+      case 'card-open-class':
+        openCard(classCardData(), `${(C.title || '학급').replace(/[\\/:*?"<>|]/g, '')}_감사보고서_${new Date().toISOString().slice(0, 10)}.png`);
+        break;
+      case 'card-save': {
+        if (!cardCanvas) return;
+        const size = await report.download(cardCanvas, cardCanvas.dataset.filename);
+        toast(`보고서 이미지를 저장했습니다 (${Math.round(size / 1024).toLocaleString()}KB).`);
+        break;
+      }
+      case 'card-close':
+        closeCard(); break;
+      case 'dict-add': {
+        const w = ($('#dictWord').value || '').trim();
+        const alt = ($('#dictAlt').value || '').trim();
+        if (!w) { toast('잡을 이름을 적어 주세요.'); return; }
+        const list = dictLoad();
+        if (list.some((d) => d.word === w)) { toast('이미 추가된 말입니다.'); return; }
+        list.unshift({ word: w, alt: alt || '관련 서비스' });
+        dictSave(list);
+        renderDict();
+        $('#dictWord').value = '';
+        $('#dictAlt').value = '';
+        toast(`‘${w}’을(를) 내 사전에 넣었습니다. 다음 감사부터 잡습니다.`);
+        if (S.stage === 'report') { reauditSingle(); render(); }
+        break;
+      }
+      case 'dict-export': {
+        const list = dictLoad();
+        const text = list.map((d) => `${d.word} → ${d.alt}`).join('\n');
+        const box = $('#dictIo');
+        box.hidden = false; box.value = text; box.select();
+        try { await navigator.clipboard.writeText(text); toast('내 사전을 복사했습니다. 동료 선생님께 붙여 넣어 주시면 됩니다.'); } catch (e) { toast('아래 칸의 내용을 복사해 주세요.'); }
+        break;
+      }
+      case 'dict-import': {
+        const box = $('#dictIo');
+        if (box.hidden) { box.hidden = false; box.value = ''; box.placeholder = '한 줄에 하나 — 이름 → 바꿀 말'; box.focus(); return; }
+        const lines = (box.value || '').split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+        const list = dictLoad();
+        let added = 0;
+        lines.forEach((l) => {
+          const m = l.split(/\s*(?:→|->|=>|,|\t)\s*/);
+          const word = (m[0] || '').trim();
+          if (!word || list.some((d) => d.word === word)) return;
+          list.unshift({ word, alt: (m[1] || '').trim() || '관련 서비스' });
+          added++;
+        });
+        dictSave(list); renderDict(); box.hidden = true;
+        toast(added ? `${added}개를 내 사전에 넣었습니다.` : '새로 넣을 말이 없습니다.');
+        if (S.stage === 'report') { reauditSingle(); render(); }
+        break;
+      }
+      case 'dict-del': {
+        const list = dictLoad();
+        list.splice(Number(el.dataset.k), 1);
+        dictSave(list);
+        renderDict();
+        if (S.stage === 'report') { reauditSingle(); render(); }
+        break;
+      }
+      case 'fb-tone': {
+        const same = el.classList.contains('on');
+        document.querySelectorAll('.fb-tone').forEach((b) => b.classList.remove('on'));
+        fbTone = same ? '' : el.dataset.tone;
+        if (!same) el.classList.add('on');
+        break;
+      }
+      case 'fb-send':
+        sendFeedback(); break;
+      case 'go-home': // 왼쪽 위 집 모양 — 개별 감사 첫 화면으로 (작업 내용은 사례로 보존)
+        ev.preventDefault();
+        stage.stop();
+        S.stage = 'input'; S.panel = null; S.editing = false; saveCase();
+        if (location.hash !== '#single') location.hash = '#single'; else render();
+        window.scrollTo({ top: 0 });
+        break;
+      case 'single-new':
+        S.stage = 'input'; S.panel = null; saveCase(); render(); break;
+      case 'case-prev':
+        gotoCase(S.idx - 1); break;
+      case 'case-next':
+        gotoCase(S.idx + 1); break;
+      case 'case-new':
+        newCase(); toast(`새 사례를 추가했습니다 (${S.cases.length}번째)`); break;
+      case 'print':
+        window.print(); break;
+      case 'focus-issue': {
+        if (currentView() === 'class') { // 집중치료 화면: 형광펜 → 해당 질문으로 이동
+          const items = classQuestions(C.queue[C.pos]);
+          const k = items.findIndex((x) => x.issue.signature === sig);
+          const card = document.getElementById(`qc-${k}`);
+          if (card) { card.scrollIntoView({ behavior: 'smooth', block: 'center' }); card.classList.add('flash'); setTimeout(() => card.classList.remove('flash'), 1200); }
+          return;
+        }
+        const issue = currentIssue(sig);
+        if (!issue) return;
+        if (S.panel && S.panel.sig === sig) { S.panel = null; render(); return; }
+        const q = E.buildQuestion(issue, S.audit, { sources: S.source });
+        const usable = (x) => x && q.actions.includes(x) && (x !== 'source' || S.source);
+        S.panel = { sig, action: usable(q.primary) ? q.primary : (q.actions.find((x) => x !== 'source' || S.source) || null) };
+        render();
+        const mark = document.querySelector('mark.hl.active');
+        if (mark) {
+          const box = mark.getBoundingClientRect();
+          if (box.top < 90 || box.bottom > window.innerHeight - 260) mark.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+        requestAnimationFrame(positionPopover);
+        break;
+      }
+      case 'quick-fix': { // 대체 문장을 고르면 곧바로 고쳐 쓰기 칸으로
+        const issue = currentIssue(sig);
+        const q = E.buildQuestion(issue, S.audit, { sources: S.source });
+        const list = [...(q.suggestions || []), ...(q.templates || [])].filter(Boolean).slice(0, 3);
+        const d = draftFor(sig);
+        d.rewrite = list[Number(el.dataset.k)] || '';
+        d.target = (q.targets || [])[0] || '';
+        S.panel = { sig, action: 'rewrite' };
+        render();
+        requestAnimationFrame(() => {
+          const ta = document.querySelector('[data-input="draft-rewrite"]');
+          if (!ta) return;
+          ta.focus();
+          const at = ta.value.indexOf('〔');
+          if (at >= 0) ta.setSelectionRange(at, ta.value.indexOf('〕', at) + 1);
+        });
+        break;
+      }
+      case 'rx': {
+        const action = el.dataset.action;
+        if (action === 'compose') { // 원문에서 뽑은 대상·자료를 첫 칸에 채워 둔다
+          const issue = currentIssue(sig);
+          const q = E.buildQuestion(issue, S.audit, { sources: S.source });
+          const d = draftFor(sig);
+          if (!d.cTopic) d.cTopic = (q.parts && q.parts.topic) || '';
+        }
+        // 같은 처방을 다시 누르면 그 처방만 접는다 (안내 풍선은 열어 둔다)
+        if (S.panel && S.panel.sig === sig && S.panel.action === action) S.panel = { sig, action: null };
+        else S.panel = { sig, action };
+        render();
+        break;
+      }
+      case 'panel-close':
+        S.panel = null; render(); break;
+      case 'panel-apply': {
+        const issue = currentIssue(sig);
+        if (!issue) return;
+        const q = E.buildQuestion(issue, S.audit, { sources: S.source });
+        const ans = answerFromDraft(issue, q, S.panel.action, draftFor(sig));
+        if (ans) { applySingle(issue, ans); render(); }
+        break;
+      }
+      case 'draft-check': {
+        const d = draftFor(sig);
+        const k = Number(el.dataset.k);
+        d.checked = el.checked ? [...d.checked, k] : d.checked.filter((x) => x !== k);
+        render();
+        if (el.checked) { const input = document.getElementById(`edit-${k}-${sig.length}`); if (input) { input.focus(); const at = input.value.indexOf('〔'); if (at >= 0) input.setSelectionRange(at, input.value.indexOf('〕', at) + 1); } }
+        break;
+      }
+      case 'draft-custom':
+        draftFor(sig).customOn = el.checked; render();
+        if (el.checked) { const input = document.querySelector('[data-input="draft-custom-text"]'); if (input) input.focus(); }
+        break;
+      case 'draft-keepeval':
+        draftFor(sig).keepEval = el.checked; updatePreview(sig); break;
+      case 'use-template': {
+        const issue = currentIssue(sig);
+        const q = E.buildQuestion(issue, S.audit, { sources: S.source });
+        const d = draftFor(sig);
+        d.detail = (q.templates || [])[Number(el.dataset.k)] || '';
+        render();
+        const input = document.querySelector(`[data-input="draft-detail"][data-sig="${CSS.escape(sig)}"]`);
+        if (input) { input.focus(); const at = input.value.indexOf('〔'); if (at >= 0) input.setSelectionRange(at, input.value.indexOf('〕', at) + 1); }
+        break;
+      }
+      case 'pick-target': {
+        const issue = currentIssue(sig);
+        const q = E.buildQuestion(issue, S.audit, { sources: S.source });
+        const d = draftFor(sig);
+        const k = Number(el.dataset.k);
+        d.target = k < 0 ? '' : (q.targets || [])[k] || '';
+        d.rewrite = '';
+        render();
+        const ta = document.querySelector('[data-input="draft-rewrite"]');
+        if (ta) ta.focus();
+        break;
+      }
+      case 'use-rewrite': {
+        const issue = currentIssue(sig);
+        const q = E.buildQuestion(issue, S.audit, { sources: S.source });
+        const d = draftFor(sig);
+        d.rewrite = [...(q.suggestions || []), ...(q.templates || [])][Number(el.dataset.k)] || '';
+        render();
+        const ta = document.querySelector('[data-input="draft-rewrite"]');
+        if (ta) { ta.focus(); const at = ta.value.indexOf('〔'); if (at >= 0) ta.setSelectionRange(at, ta.value.indexOf('〕', at) + 1); }
+        break;
+      }
+      case 'use-replacement': {
+        const issue = currentIssue(sig);
+        const alts = issue.replacements && issue.replacements.length ? issue.replacements : [issue.replacement];
+        const d = draftFor(sig);
+        d.replacement = alts[Number(el.dataset.k)];
+        d.repCustomOn = false;
+        render();
+        break;
+      }
+      case 'rep-custom': {
+        const d = draftFor(sig);
+        d.repCustomOn = true;
+        d.replacement = '';
+        render();
+        const input = document.querySelector('[data-input="draft-replacement"]');
+        if (input) input.focus();
+        break;
+      }
+      case 'use-source': {
+        const issue = currentIssue(sig);
+        const q = E.buildQuestion(issue, S.audit, { sources: S.source });
+        const hit = q.sourceHits[Number(el.dataset.k)];
+        draftFor(sig).sourceFact = ko.asRecordSentence(hit.text.replace(/^\[[^\]]*\]\s*/, '').replace(/^나는\s*/, ''));
+        render();
+        break;
+      }
+      case 'undo': {
+        const h = S.history.pop();
+        if (h) { Object.assign(S, h); reauditSingle(); render(); }
+        break;
+      }
+      case 'reset-original':
+        S.history.push(snapshot());
+        Object.assign(S, { text: S.original, facts: [], confirmed: 0, dismissed: new Set(), verified: new Set(), panel: null });
+        reauditSingle(); render();
+        break;
+      case 'copy':
+        try { await navigator.clipboard.writeText(S.text); toast('수정본을 복사했습니다.'); } catch (e) { toast('복사하지 못했습니다. 직접 선택해 복사해 주세요.'); }
+        break;
+      case 'edit-toggle':
+        S.editing = true; render(); { const t = document.getElementById('editText'); if (t) t.focus(); } break;
+      case 'edit-cancel':
+        S.editing = false; render(); break;
+      case 'edit-save': {
+        const t = document.getElementById('editText');
+        const val = t ? t.value.trim() : '';
+        if (!val) { toast('내용을 입력해 주세요.'); return; }
+        S.history.push(snapshot());
+        S.text = val;
+        S.facts.push(val); // 교사가 직접 쓴 문장 — 사실 가드의 기준에 포함
+        S.editing = false;
+        reauditSingle();
+        render();
+        toast(`직접 수정 후 다시 감사했습니다 · ${S.audit.overall}점`);
+        break;
+      }
+
+      /* 학급 */
+      case 'class-demo':
+        C.title = demo.classDemo.title;
+        C.raw = demo.classDemo.students.map((s) => [s.id, s.name, s.text, s.source].map((c) => (/[\t\n"]/.test(c) ? `"${c.replace(/"/g, '""')}"` : c)).join('\t')).join('\n');
+        C.parsed = demo.classDemo.students;
+        render(); break;
+      case 'class-start':
+        startClass(C.parsed, ($('#clsTitle') || {}).value); break;
+      case 'class-reset':
+        C.stage = 'input'; render(); break;
+      case 'treat-start':
+        buildQueue();
+        if (!C.queue.length) toast('집중치료가 필요한 학생이 없습니다.');
+        C.stage = 'treat'; C.last = null; render(); window.scrollTo({ top: 0 }); break;
+      case 'treat-finish':
+        C.stage = 'treat'; C.queue = []; C.pos = 0; C.last = null; render(); break;
+      case 'to-dash':
+        C.stage = 'dash'; C.last = null; render(); break;
+      case 'treat-skip':
+        studentOf(C.queue[C.pos]).status = 'skipped'; C.pos++; render(); window.scrollTo({ top: 0 }); break;
+      case 'treat-apply':
+        applyTreatment(); break;
+      case 'treat-undo': {
+        const L = C.last;
+        Object.assign(studentOf(L.id), L.snapshot);
+        C.last = null; classReaudit(); render(); break;
+      }
+      case 'treat-next':
+        C.last = null; C.pos++; render(); window.scrollTo({ top: 0 }); break;
+      case 'c-choice':
+        cdraft(C.queue[C.pos], sig).choice = Number(el.dataset.k); render(); break;
+      case 'c-check': {
+        const d = cdraft(C.queue[C.pos], sig);
+        const k = Number(el.dataset.k);
+        d.checked = el.checked ? [...d.checked, k] : d.checked.filter((x) => x !== k);
+        render(); break;
+      }
+      case 'c-custom':
+        cdraft(C.queue[C.pos], sig).customOn = el.checked; render(); break;
+      case 'c-template': {
+        const id = C.queue[C.pos];
+        const item = classQuestions(id).find((x) => x.issue.signature === sig);
+        const d = cdraft(id, sig);
+        d.detail = (item.question.templates || [])[Number(el.dataset.k)] || '';
+        d.tpl = d.detail;
+        render();
+        const items = classQuestions(id);
+        const k = items.findIndex((x) => x.issue.signature === sig);
+        const input = document.querySelector(`#qc-${k} [data-input="c-detail"]`);
+        if (input) { input.focus(); const at = input.value.indexOf('〔'); if (at >= 0) input.setSelectionRange(at, input.value.indexOf('〕', at) + 1); }
+        break;
+      }
+      case 'c-sugg': {
+        const id = C.queue[C.pos];
+        const item = classQuestions(id).find((x) => x.issue.signature === sig);
+        const d = cdraft(id, sig);
+        const picked = (item.question.suggestions || [])[Number(el.dataset.k)] || '';
+        d.rewrite = d.rewrite === picked ? '' : picked;
+        d.tpl = d.rewrite ? picked : '';
+        render();
+        const k = classQuestions(id).findIndex((x) => x.issue.signature === sig);
+        const input = document.querySelector(`#qc-${k} [data-input="c-rewrite"]`);
+        if (input) { input.focus(); const at = input.value.indexOf('〔'); if (at >= 0) input.setSelectionRange(at, input.value.indexOf('〕', at) + 1); }
+        break;
+      }
+      case 'c-none': {
+        const d = cdraft(C.queue[C.pos], sig);
+        d.none = el.checked;
+        if (el.checked) { d.checked = []; d.customOn = false; d.detail = ''; d.rewrite = ''; d.cTopic = ''; d.cBasis = ''; d.cFinding = ''; }
+        render(); break;
+      }
+      case 'open-single': {
+        const st = studentOf(el.dataset.id);
+        startSingle(st.text, st.source, true);
+        toast(`${st.id} ${st.name} — 개별 감사 화면에서 보는 중입니다(학급 결과와는 따로 저장됩니다).`);
+        break;
+      }
+      case 'export-csv':
+        exportCsv(); break;
+      default:
+    }
+  });
+
+  document.addEventListener('input', (ev) => {
+    const el = ev.target;
+    if (el.id === 'inText') { $('#inBytes').innerHTML = byteLine(el.value); S.original = el.value; return; }
+    if (el.id === 'inSource') { S.source = el.value; return; }
+    if (el.id === 'clsTitle') { C.title = el.value; return; }
+    if (el.id === 'clsRaw') {
+      C.raw = el.value;
+      C.parsed = rowsToStudents(parseDelimited(el.value));
+      const n = C.parsed.length;
+      $('#clsCount').textContent = n ? `${n}명 인식됨` : '아직 인식된 학생이 없습니다';
+      const btn = document.querySelector('[data-act="class-start"]');
+      if (btn) btn.disabled = !n;
+      return;
+    }
+    const kind = el.dataset.input;
+    if (!kind) return;
+    const sig = el.dataset.sig;
+    if (kind.startsWith('draft')) {
+      const d = draftFor(sig);
+      if (kind === 'draft-edit') d.edits[Number(el.dataset.k)] = el.value;
+      if (kind === 'draft-custom-text') d.custom = el.value;
+      if (kind === 'draft-detail') d.detail = el.value;
+      if (kind === 'draft-source') d.sourceFact = el.value;
+      if (kind === 'draft-replacement') d.replacement = el.value;
+      if (kind === 'draft-rewrite') d.rewrite = el.value;
+      updatePreview(sig);
+      return;
+    }
+    if (kind.startsWith('c3-')) {
+      const inClass = currentView() === 'class';
+      const d = inClass ? cdraft(C.queue[C.pos], sig) : draftFor(sig);
+      if (kind === 'c3-topic') d.cTopic = el.value;
+      if (kind === 'c3-basis') d.cBasis = el.value;
+      if (kind === 'c3-finding') d.cFinding = el.value;
+      const made = E.composeSentence({ topic: d.cTopic, basis: d.cBasis, finding: d.cFinding });
+      if (inClass) { syncClassCard(sig); return; }
+      const box = document.querySelector('.compose-out');
+      if (box) box.innerHTML = `<span class="lbl">만들어진 문장</span>${esc(made)}`;
+      else if (made && S.panel) render();
+      updatePreview(sig);
+      return;
+    }
+    if (kind.startsWith('c-')) {
+      const d = cdraft(C.queue[C.pos], sig);
+      if (kind === 'c-edit') d.edits[Number(el.dataset.k)] = el.value;
+      if (kind === 'c-custom-text') d.custom = el.value;
+      if (kind === 'c-detail') d.detail = el.value;
+      if (kind === 'c-rewrite') d.rewrite = el.value;
+      syncClassCard(sig);
+    }
+  });
+
+  document.addEventListener('change', (ev) => {
+    if (ev.target.id === 'clsFile' && ev.target.files[0]) readFile(ev.target.files[0]);
+  });
+
+  document.addEventListener('keydown', (ev) => {
+    if (ev.key !== 'Escape') return;
+    if (cardCanvas) { closeCard(); return; }
+    if (S.panel) { S.panel = null; render(); }
+  });
+
+  window.addEventListener('resize', () => { if (S.panel) positionPopover(); });
+
+  renderFeedbackMine();
+  const fbInput = $('#fbText');
+  if (fbInput) fbInput.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') { ev.preventDefault(); sendFeedback(); } });
+
+  const markEl = $('#brandMark');
+  if (markEl) markEl.innerHTML = art.mark();
+  render();
+  window.SA.initBridge({
+    getText: () => S.text || S.original || '',
+    audit: (text) => {
+      newCase();
+      startSingle(text, '', false);
+      toast('표절감사관 문서를 새 세특으로 가져왔습니다. 이전 감사는 그대로 남아 있습니다.');
+    },
+    empty: () => toast('먼저 개별 감사에 비교할 세특을 입력해 주세요.'),
+  });
+})();

@@ -1,0 +1,18 @@
+Korean AI text detector used by Plagiarism Auditor
+
+Original model: hyun5ooo/koelectra-base-v3-discriminator-ai-detect
+https://huggingface.co/hyun5ooo/koelectra-base-v3-discriminator-ai-detect
+Revision: 1ceaa9f827dde3d22853b1260c173d8c2a7b925a
+Model card declares Apache License 2.0.
+
+Base tokenizer: monologg/koelectra-base-v3-discriminator
+https://huggingface.co/monologg/koelectra-base-v3-discriminator
+Revision: 68b30cd259f34a4b5aa8786392612ba2a2617fcc
+Original model and tokenizer cards are included in this directory.
+Apache License 2.0 text is provided at ../licenses/Apache-2.0.txt.
+
+Modifications (2026-10-14): exported to ONNX opset 17; floating-point
+weights stored as float16 and cast to float32 for inference; split into
+48 MiB chunks for static hosting. No additional training performed.
+See manifest.json for file sizes, SHA-256 digests and source metadata.
+Conversion does not establish detection accuracy on school documents.

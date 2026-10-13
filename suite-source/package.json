@@ -1,0 +1,26 @@
+{
+  "name": "geulgyeol",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs"
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "dependencies": {
+    "express": "^5.3.0",
+    "fflate": "^0.8.3",
+    "lucide-react": "^1.55.0",
+    "multer": "^2.4.0",
+    "onnxruntime-web": "^1.24.3",
+    "pdfjs-dist": "^6.4.299",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "vite": "^8.3.4"
+  },
+  "devDependencies": {
+    "prettier": "^3.9.10"
+  }
+}
